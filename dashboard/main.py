@@ -1572,6 +1572,177 @@ async def rankings_chart_page(client_id: int, request: Request):
         "keywords": keywords, "chart_data": chart_data, "locations": locations
     })
 
+# ===== PART 3: ACTIVITY TIMELINE PAGE =====
+@app.get("/activity", response_class=HTMLResponse)
+async def activity_page(request: Request):
+    user = get_current_user(request)
+    if not user or user["role"] not in ("super_admin", "operations_manager"):
+        return RedirectResponse(url="/login")
+    db = get_db()
+    activities = [dict(r) for r in db.execute("""
+        SELECT al.*, u.full_name as user_name FROM activity_log al LEFT JOIN users u ON al.user_id=u.id ORDER BY al.created_at DESC LIMIT 200
+    """).fetchall()]
+    db.close()
+    return templates.TemplateResponse("activity_timeline.html", {"request": request, "user": user, "activities": activities})
+
+# ===== PART 3: WORKER PERFORMANCE =====
+@app.get("/api/performance/{user_id}")
+async def get_worker_performance(user_id: int, request: Request):
+    user = require_auth(request)
+    if user["role"] not in ("super_admin", "operations_manager") and user["id"] != user_id:
+        return JSONResponse({"error": "Unauthorized"}, status_code=403)
+    db = get_db()
+    worker = db.execute("SELECT id, username, full_name, role, rank FROM users WHERE id=?", (user_id,)).fetchone()
+    if not worker:
+        db.close()
+        raise HTTPException(status_code=404)
+    worker = dict(worker)
+    total_tasks = db.execute("SELECT COUNT(*) FROM tasks WHERE assigned_to=?", (user_id,)).fetchone()[0]
+    completed_tasks = db.execute("SELECT COUNT(*) FROM tasks WHERE assigned_to=? AND status='completed'", (user_id,)).fetchone()[0]
+    in_progress = db.execute("SELECT COUNT(*) FROM tasks WHERE assigned_to=? AND status='in_progress'", (user_id,)).fetchone()[0]
+    total_hours = db.execute("SELECT COALESCE(SUM(hours),0) FROM time_entries WHERE user_id=?", (user_id,)).fetchone()[0]
+    avg_hours = db.execute("SELECT COALESCE(AVG(hours),0) FROM time_entries WHERE user_id=? AND hours > 0", (user_id,)).fetchone()[0]
+    active_projects = db.execute("SELECT COUNT(DISTINCT project_id) FROM tasks WHERE assigned_to=? AND status IN ('in_progress','pending')", (user_id,)).fetchone()[0]
+    
+    # Recent completed tasks
+    recent = [dict(r) for r in db.execute("""
+        SELECT t.title, t.status, t.priority, p.title as project_title 
+        FROM tasks t LEFT JOIN projects p ON t.project_id=p.id WHERE t.assigned_to=? ORDER BY t.created_at DESC LIMIT 10
+    """, (user_id,)).fetchall()]
+    
+    # Performance score (0-100)
+    completion_rate = round(completed_tasks / total_tasks * 100) if total_tasks else 0
+    score = min(100, completion_rate + min(20, int(total_hours)))
+    
+    db.close()
+    return {
+        "worker": worker,
+        "stats": {
+            "total_tasks": total_tasks, "completed_tasks": completed_tasks, "in_progress": in_progress,
+            "completion_rate": completion_rate, "total_hours": round(total_hours, 1),
+            "avg_hours_per_task": round(avg_hours, 1), "active_projects": active_projects,
+            "performance_score": score
+        },
+        "recent_tasks": recent
+    }
+
+@app.get("/performance", response_class=HTMLResponse)
+async def performance_page(request: Request):
+    user = get_current_user(request)
+    if not user or user["role"] not in ("super_admin", "operations_manager"):
+        return RedirectResponse(url="/login")
+    db = get_db()
+    workers = [dict(r) for r in db.execute("SELECT id, username, full_name, role, rank, salary FROM users WHERE role NOT IN ('super_admin','client') AND is_active=1").fetchall()]
+    for w in workers:
+        total = db.execute("SELECT COUNT(*) FROM tasks WHERE assigned_to=?", (w["id"],)).fetchone()[0]
+        completed = db.execute("SELECT COUNT(*) FROM tasks WHERE assigned_to=? AND status='completed'", (w["id"],)).fetchone()[0]
+        hours = db.execute("SELECT COALESCE(SUM(hours),0) FROM time_entries WHERE user_id=?", (w["id"],)).fetchone()[0]
+        w["total_tasks"] = total
+        w["completed_tasks"] = completed
+        w["completion_rate"] = round(completed / total * 100) if total else 0
+        w["total_hours"] = round(hours, 1)
+        w["score"] = min(100, w["completion_rate"] + min(20, int(hours)))
+    workers.sort(key=lambda x: x["score"], reverse=True)
+    db.close()
+    return templates.TemplateResponse("performance.html", {"request": request, "user": user, "workers": workers})
+
+# ===== PART 3: NOTIFICATIONS API =====
+@app.get("/api/notifications")
+async def get_notifications(request: Request):
+    user = require_auth(request)
+    db = get_db()
+    notifs = [dict(r) for r in db.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 30", (user["id"],)).fetchall()]
+    unread = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0", (user["id"],)).fetchone()[0]
+    db.close()
+    return {"notifications": notifs, "unread_count": unread}
+
+@app.post("/api/notifications/read")
+async def mark_notifications_read(request: Request):
+    user = require_auth(request)
+    db = get_db()
+    db.execute("UPDATE notifications SET is_read=1 WHERE user_id=? AND is_read=0", (user["id"],))
+    db.commit()
+    db.close()
+    return {"message": "All notifications marked as read"}
+
+@app.post("/api/notifications/create")
+async def create_notification(request: Request):
+    user = require_role(request, ["super_admin", "operations_manager"])
+    data = await request.json()
+    db = get_db()
+    db.execute("INSERT INTO notifications (user_id, type, title, message, link) VALUES (?,?,?,?,?)",
+               (data["user_id"], data.get("type", "info"), data["title"], data.get("message", ""), data.get("link")))
+    db.commit()
+    db.close()
+    return {"message": "Notification sent"}
+
+# ===== PART 3: BULK TASK CREATION FROM TEMPLATES =====
+@app.post("/api/tasks/bulk")
+async def create_bulk_tasks(request: Request):
+    user = require_role(request, ["super_admin", "operations_manager", "account_manager"])
+    data = await request.json()
+    project_id = data["project_id"]
+    tasks = data.get("tasks", [])
+    db = get_db()
+    c = db.cursor()
+    created = 0
+    for i, t in enumerate(tasks):
+        c.execute("""INSERT INTO tasks (project_id, title, description, priority, assigned_to, order_num) VALUES (?,?,?,?,?,?)""",
+                  (project_id, t["title"], t.get("description", ""), t.get("priority", "medium"), t.get("assigned_to"), i + 1))
+        created += 1
+    log_activity(db, user["id"], "bulk_tasks_created", f"Created {created} tasks for project #{project_id}", "project", project_id)
+    db.commit()
+    db.close()
+    return {"message": f"{created} tasks created", "count": created}
+
+# ===== PART 3: TASK STATUS UPDATE =====
+@app.put("/api/tasks/{task_id}/status")
+async def update_task_status(task_id: int, request: Request):
+    user = require_auth(request)
+    data = await request.json()
+    new_status = data["status"]
+    db = get_db()
+    task = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+    if not task:
+        db.close()
+        raise HTTPException(status_code=404)
+    db.execute("UPDATE tasks SET status=? WHERE id=?", (new_status, task_id))
+    if new_status == "completed":
+        db.execute("UPDATE tasks SET completed_date=datetime('now') WHERE id=?", (task_id,))
+        # Update project progress
+        proj_id = task["project_id"]
+        total = db.execute("SELECT COUNT(*) FROM tasks WHERE project_id=?", (proj_id,)).fetchone()[0]
+        done = db.execute("SELECT COUNT(*) FROM tasks WHERE project_id=? AND status='completed'", (proj_id,)).fetchone()[0] + 1
+        progress = round(done / total * 100) if total else 0
+        db.execute("UPDATE projects SET progress=? WHERE id=?", (progress, proj_id))
+    log_activity(db, user["id"], "task_status_updated", f"Task #{task_id} → {new_status}", "task", task_id)
+    db.commit()
+    db.close()
+    return {"message": f"Task updated to {new_status}"}
+
+# ===== PART 3: DASHBOARD SEARCH =====
+@app.get("/api/search")
+async def search(request: Request, q: str = ""):
+    user = require_auth(request)
+    if not q or len(q) < 2:
+        return {"results": []}
+    db = get_db()
+    results = []
+    # Search clients
+    for r in db.execute("SELECT id, business_name, contact_name, industry FROM clients WHERE business_name LIKE ? OR contact_name LIKE ? LIMIT 5",
+                         (f"%{q}%", f"%{q}%")).fetchall():
+        results.append({"type": "client", "id": r["id"], "title": r["business_name"], "subtitle": r["contact_name"], "link": f"/client/{r['id']}"})
+    # Search projects
+    for r in db.execute("SELECT p.id, p.title, c.business_name FROM projects p LEFT JOIN clients c ON p.client_id=c.id WHERE p.title LIKE ? LIMIT 5",
+                         (f"%{q}%",)).fetchall():
+        results.append({"type": "project", "id": r["id"], "title": r["title"], "subtitle": r["business_name"] or "", "link": f"/client/{r['id']}"})
+    # Search tasks
+    for r in db.execute("SELECT t.id, t.title, p.title as project_title FROM tasks t LEFT JOIN projects p ON t.project_id=p.id WHERE t.title LIKE ? LIMIT 5",
+                         (f"%{q}%",)).fetchall():
+        results.append({"type": "task", "id": r["id"], "title": r["title"], "subtitle": r["project_title"] or "", "link": "#"})
+    db.close()
+    return {"results": results}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

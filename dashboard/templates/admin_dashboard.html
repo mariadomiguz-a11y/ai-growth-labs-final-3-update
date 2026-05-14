@@ -15,12 +15,15 @@
 <a href="#invoices-section">🧨Invoices</a>
 <a href="#rankings-section">📈Rankings</a>
 <a href="#contracts-section">📄Contracts</a>
+<a href="/activity">📜Activity Log</a>
+<a href="/performance">📊Performance</a>
 <a href="/settings">⚙️API Settings</a>
 </nav>
 <div class="sidebar-user"><div class="user-avatar">{{ user.full_name[:2]|upper }}</div>
 <div><strong>{{ user.full_name }}</strong><small>{{ user.role }}</small></div></div></aside>
 <main class="main">
 <div class="header-bar"><h1>Super Admin Dashboard</h1><span>Agency Operating System — Complete Overview</span>
+<div style="position:relative;margin:8px 0"><input id="globalSearch" placeholder="🔍 Search clients, projects, tasks..." class="form-input" style="width:320px" oninput="doSearch(this.value)"><div id="searchResults" style="position:absolute;top:100%;left:0;width:320px;background:#0F172A;border:1px solid #1E3A5F;border-radius:8px;display:none;z-index:100;max-height:300px;overflow-y:auto"></div></div>
 <div class="header-actions">
 <button class="btn btn-primary" onclick="openModal('addClientModal')">+ Add Client</button>
 <button class="btn btn-secondary" onclick="openModal('addProjectModal')">+ New Project</button>
@@ -189,5 +192,16 @@ if(!d.contracts||!d.contracts.length){el.innerHTML='<p style="color:#64748B">No 
 let html='<table><thead><tr><th>Client</th><th>Title</th><th>Period</th><th>Monthly Value</th><th>Status</th></tr></thead><tbody>';
 d.contracts.forEach(c=>{html+='<tr><td>'+c.client_id+'</td><td>'+c.title+'</td><td>'+c.start_date+' to '+c.end_date+'</td><td><strong>$'+(c.monthly_value||0).toFixed(2)+'</strong></td><td><span class="badge badge-'+c.status+'">'+c.status+'</span></td></tr>'});
 html+='</tbody></table>';el.innerHTML=html}).catch(()=>{document.getElementById('admin-contracts').innerHTML='<p style="color:#64748B">Contracts loading error</p>'})
+
+// Global search
+let searchTimer;
+function doSearch(q){clearTimeout(searchTimer);const el=document.getElementById('searchResults');
+if(q.length<2){el.style.display='none';return}
+searchTimer=setTimeout(()=>{fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(d=>{
+if(!d.results.length){el.innerHTML='<div style="padding:12px;color:#64748B">No results found</div>';el.style.display='block';return}
+let h='';d.results.forEach(r=>{const icon=r.type==='client'?'👤':r.type==='project'?'📋':'✅';
+h+='<a href="'+r.link+'" style="display:block;padding:8px 12px;color:#CBD5E1;text-decoration:none;border-bottom:1px solid #1E3A5F">'+icon+' <strong>'+r.title+'</strong><br><small style="color:#64748B">'+r.type+' • '+r.subtitle+'</small></a>'});
+el.innerHTML=h;el.style.display='block'})},300)}
+document.addEventListener('click',e=>{if(!e.target.closest('#globalSearch')&&!e.target.closest('#searchResults'))document.getElementById('searchResults').style.display='none'})
 </script>
 </main></body></html>

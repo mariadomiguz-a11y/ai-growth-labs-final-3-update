@@ -28,6 +28,18 @@
 <div class="stat-card"><div class="stat-label">Active Projects</div><div class="stat-value">{{ stats.active_projects }}</div></div>
 </div>
 
+<!-- Time Tracker -->
+<div class="card" id="timer-section"><h3>⏱️ Time Tracker</h3>
+<div id="timer-display" style="display:none;background:#0B1120;border:1px solid #1E3A5F;border-radius:10px;padding:16px;margin-bottom:12px">
+<div style="display:flex;justify-content:space-between;align-items:center">
+<div><span style="color:#22D3EE;font-size:1.4rem;font-weight:800" id="timer-clock">00:00:00</span><br>
+<small id="timer-task-name" style="color:#94A3B8"></small></div>
+<div><input id="stop-notes" placeholder="Notes (optional)" class="form-input" style="width:200px;display:inline-block;margin-right:8px">
+<button class="btn btn-danger" onclick="stopTimer()">⏹ Stop Timer</button></div>
+</div></div>
+<p style="color:#64748B;font-size:.82rem;margin-bottom:8px">Click the ⏱️ button on any task to start tracking time.</p>
+</div>
+
 <div class="card" id="tasks-section"><h3>✅ My Tasks — Kanban Board</h3>
 <div class="kanban-board">
 <div class="kanban-col"><h4>⏳ Pending</h4>
@@ -37,13 +49,15 @@
 <h5>{{ t.title }}</h5><small>{{ t.business_name }} — {{ t.project_title }}</small>
 <div class="kanban-actions">
 <button class="btn btn-sm btn-primary" onclick="moveTask({{ t.id }},'in_progress')">Start →</button>
+<button class="btn btn-sm btn-secondary" onclick="startTimer({{ t.id }},'{{ t.title }}')">⏱️</button>
 {% if t.is_automated %}<button class="btn btn-sm btn-warning" onclick="runAutoTask({{ t.id }})">🤖 Run AI</button>{% endif %}
 </div></div>{% endfor %}</div>
 <div class="kanban-col"><h4>🔄 In Progress</h4>
 {% for t in my_tasks if t.status == 'in_progress' %}
 <div class="kanban-card active"><div class="kanban-card-header"><span class="badge badge-{{ t.priority }}">{{ t.priority }}</span></div>
 <h5>{{ t.title }}</h5><small>{{ t.business_name }} — {{ t.project_title }}</small>
-<div class="kanban-actions"><button class="btn btn-sm btn-warning" onclick="moveTask({{ t.id }},'blocked')">Block</button>
+<div class="kanban-actions"><button class="btn btn-sm btn-secondary" onclick="startTimer({{ t.id }},'{{ t.title }}')">⏱️</button>
+<button class="btn btn-sm btn-warning" onclick="moveTask({{ t.id }},'blocked')">Block</button>
 <button class="btn btn-sm btn-success" onclick="moveTask({{ t.id }},'completed')">Complete ✓</button></div></div>{% endfor %}</div>
 <div class="kanban-col"><h4>🚫 Blocked</h4>
 {% for t in my_tasks if t.status == 'blocked' %}
@@ -104,5 +118,26 @@ function runAutoTask(id){api('/api/tasks/'+id+'/run-auto',{}).then(r=>{alert(r.m
 function markRead(id){api('/api/notifications/'+id+'/read',{}).then(()=>location.reload())}
 function runAudit(){api('/api/audit',{website_url:document.getElementById('auditUrl').value,ai_provider:document.getElementById('auditProvider').value}).then(r=>{alert(r.message||r.error)})}
 function addSuggestion(){api('/api/suggestions',{project_id:document.getElementById('sg_project').value||null,title:document.getElementById('sg_title').value,description:document.getElementById('sg_desc').value}).then(()=>{closeModal('addSuggestionModal');location.reload()})}
+
+// Time tracking
+let timerInterval=null;
+let timerStart=null;
+function startTimer(taskId,taskName){api('/api/time/start',{task_id:taskId}).then(r=>{if(r.error){alert(r.error);return}
+timerStart=new Date();document.getElementById('timer-display').style.display='block';
+document.getElementById('timer-task-name').textContent='Working on: '+taskName;
+timerInterval=setInterval(updateClock,1000);})}
+function stopTimer(){const notes=document.getElementById('stop-notes').value;
+api('/api/time/stop',{notes:notes}).then(r=>{if(r.error){alert(r.error);return}
+alert('Timer stopped. '+r.hours+' hours logged.');clearInterval(timerInterval);location.reload()})}
+function updateClock(){if(!timerStart)return;const diff=Math.floor((new Date()-timerStart)/1000);
+const h=Math.floor(diff/3600),m=Math.floor((diff%3600)/60),s=diff%60;
+document.getElementById('timer-clock').textContent=
+String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')}
+// Check for active timer on load
+fetch('/api/time/active').then(r=>r.json()).then(d=>{if(d.active_timer){
+timerStart=new Date(new Date()-d.active_timer.elapsed_minutes*60000);
+document.getElementById('timer-display').style.display='block';
+document.getElementById('timer-task-name').textContent='Working on: '+(d.active_timer.task_title||'Task');
+timerInterval=setInterval(updateClock,1000);}})
 </script>
 </main></body></html>

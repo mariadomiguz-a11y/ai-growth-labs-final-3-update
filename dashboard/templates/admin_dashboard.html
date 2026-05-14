@@ -12,6 +12,9 @@
 <a href="#audit-section">🔍SEO Audit</a>
 <a href="/monitor">📡Team Monitor</a>
 <a href="/team-chat">💬Team Chat</a>
+<a href="#invoices-section">🧨Invoices</a>
+<a href="#rankings-section">📈Rankings</a>
+<a href="#contracts-section">📄Contracts</a>
 <a href="/settings">⚙️API Settings</a>
 </nav>
 <div class="sidebar-user"><div class="user-avatar">{{ user.full_name[:2]|upper }}</div>
@@ -88,6 +91,18 @@
 <td><button class="btn btn-sm btn-primary" onclick="generateReport({{ p.client_id }})">📄 Generate</button></td></tr>
 {% endfor %}</tbody></table></div>
 
+<!-- Invoices Section -->
+<div class="card" id="invoices-section"><h3>🧨 Invoices</h3>
+<div id="admin-invoices"><p style="color:#64748B">Loading...</p></div></div>
+
+<!-- Rankings Overview -->
+<div class="card" id="rankings-section"><h3>📈 Keyword Rankings Overview</h3>
+<div id="admin-rankings"><p style="color:#64748B">Loading...</p></div></div>
+
+<!-- Contracts -->
+<div class="card" id="contracts-section"><h3>📄 Active Contracts</h3>
+<div id="admin-contracts"><p style="color:#64748B">Loading...</p></div></div>
+
 <div class="card" id="audit-section"><h3>🔍 Run SEO DNA Audit</h3>
 <p>Paste a client's website URL and select an AI provider to run a complete DNA-level audit.</p>
 <div class="form-row"><input type="url" id="auditUrl" placeholder="https://clientwebsite.com" class="form-input">
@@ -109,7 +124,7 @@
 <div class="modal-overlay" id="addProjectModal"><div class="modal"><div class="modal-header"><h3>New Project</h3><button onclick="closeModal('addProjectModal')" class="modal-close">×</button></div>
 <div class="modal-body"><select id="np_client" class="form-select">{% for c in clients %}<option value="{{ c.id }}">{{ c.business_name }}</option>{% endfor %}</select>
 <input id="np_title" placeholder="Project Title" class="form-input"><textarea id="np_desc" placeholder="Description" class="form-input"></textarea>
-<select id="np_service" class="form-select"><option>Local SEO</option><option>AI SEO</option><option>GBP Optimization</option><option>Reputation Management</option><option>Content Creation</option><option>Social Media</option><option>Paid Advertising</option></select>
+<select id="np_service" class="form-select"><option>Local SEO</option><option>AI SEO</option><option>GBP Optimization</option><option>Reputation Management</option><option>Content Creation</option><option>Social Media</option><option>Paid Advertising</option><option>Link Building</option><option>Technical SEO Audit</option><option>Schema Markup</option><option>Citation Building</option><option>Review Management</option><option>Competitor Analysis</option></select>
 <select id="np_worker" class="form-select">{% for w in workers %}<option value="{{ w.id }}">{{ w.full_name }} ({{ w.role }})</option>{% endfor %}</select>
 <button class="btn btn-primary btn-full" onclick="addProject()">Create Project</button></div></div></div>
 
@@ -117,7 +132,7 @@
 <div class="modal-overlay" id="addWorkerModal"><div class="modal"><div class="modal-header"><h3>Add Worker</h3><button onclick="closeModal('addWorkerModal')" class="modal-close">×</button></div>
 <div class="modal-body"><input id="nw_username" placeholder="Username" class="form-input"><input id="nw_name" placeholder="Full Name" class="form-input">
 <input id="nw_email" placeholder="Email" class="form-input"><input id="nw_password" placeholder="Password" class="form-input" type="password">
-<select id="nw_role" class="form-select"><option value="worker">Worker</option><option value="tech_seo">Tech SEO</option><option value="sales">Sales</option><option value="social_media">Social Media</option><option value="finance">Finance</option></select>
+<select id="nw_role" class="form-select"><option value="worker">Worker</option><option value="tech_seo">Tech SEO</option><option value="content_writer">Content Writer</option><option value="link_builder">Link Builder</option><option value="social_media">Social Media</option><option value="finance">Finance</option><option value="sales">Sales</option><option value="account_manager">Account Manager</option><option value="operations_manager">Operations Manager</option></select>
 <select id="nw_rank" class="form-select"><option value="junior">Junior</option><option value="mid">Mid</option><option value="senior">Senior</option><option value="lead">Lead</option></select>
 <input id="nw_salary" placeholder="Monthly Salary" type="number" class="form-input">
 <button class="btn btn-primary btn-full" onclick="addWorker()">Add Worker</button></div></div></div>
@@ -152,5 +167,27 @@ function generateReport(clientId){api('/api/reports/generate',{client_id:clientI
     .then(r=>{if(r.id){window.open('/api/reports/'+r.id+'/download','_blank')}else{alert(r.error||'Error')}})}
 
 function updateSuggestion(id,status){apiPut('/api/suggestions/'+id,{status:status,admin_response:status=='approved'?'Approved by admin':'Rejected'}).then(()=>location.reload())}
+
+// Load invoices
+fetch('/api/invoices').then(r=>r.json()).then(d=>{const el=document.getElementById('admin-invoices');
+if(!d.invoices||!d.invoices.length){el.innerHTML='<p style="color:#64748B">No invoices yet.</p>';return}
+let html='<table><thead><tr><th>#</th><th>Client</th><th>Total</th><th>Status</th><th>Due</th><th>View</th></tr></thead><tbody>';
+d.invoices.forEach(i=>{html+='<tr><td>'+i.invoice_number+'</td><td>'+(i.business_name||'-')+'</td><td><strong>$'+i.total.toFixed(2)+'</strong></td><td><span class="badge badge-'+i.status+'">'+i.status+'</span></td><td>'+(i.due_date||'-')+'</td><td><a href="/api/invoices/'+i.id+'/download" target="_blank" class="btn btn-sm btn-primary">View</a></td></tr>'});
+html+='</tbody></table>';el.innerHTML=html})
+
+// Load rankings for all clients
+fetch('/api/rankings/0').then(r=>r.json()).then(d=>{const el=document.getElementById('admin-rankings');
+if(!d.rankings||!d.rankings.length){el.innerHTML='<p style="color:#64748B">No rankings tracked yet.</p>';return}
+let html='<table><thead><tr><th>Client</th><th>Keyword</th><th>Position</th><th>Change</th><th>Volume</th></tr></thead><tbody>';
+d.rankings.forEach(r=>{const change=r.previous_position?r.previous_position-r.position:0;const arrow=change>0?'<span style="color:#34D399">▲'+change+'</span>':change<0?'<span style="color:#EF4444">▼'+Math.abs(change)+'</span>':'—';
+html+='<tr><td>'+r.client_id+'</td><td><strong>'+r.keyword+'</strong></td><td>'+r.position+'</td><td>'+arrow+'</td><td>'+r.search_volume+'</td></tr>'});
+html+='</tbody></table>';el.innerHTML=html}).catch(()=>{document.getElementById('admin-rankings').innerHTML='<p style="color:#64748B">Rankings loading error</p>'})
+
+// Load contracts
+fetch('/api/contracts').then(r=>r.json()).then(d=>{const el=document.getElementById('admin-contracts');
+if(!d.contracts||!d.contracts.length){el.innerHTML='<p style="color:#64748B">No contracts yet.</p>';return}
+let html='<table><thead><tr><th>Client</th><th>Title</th><th>Period</th><th>Monthly Value</th><th>Status</th></tr></thead><tbody>';
+d.contracts.forEach(c=>{html+='<tr><td>'+c.client_id+'</td><td>'+c.title+'</td><td>'+c.start_date+' to '+c.end_date+'</td><td><strong>$'+(c.monthly_value||0).toFixed(2)+'</strong></td><td><span class="badge badge-'+c.status+'">'+c.status+'</span></td></tr>'});
+html+='</tbody></table>';el.innerHTML=html}).catch(()=>{document.getElementById('admin-contracts').innerHTML='<p style="color:#64748B">Contracts loading error</p>'})
 </script>
 </main></body></html>

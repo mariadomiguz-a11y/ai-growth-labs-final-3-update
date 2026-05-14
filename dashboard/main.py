@@ -1,15 +1,20 @@
-"""AI Growth Labs — Agency Operating System Dashboard v2"""
+"""AI Growth Labs — Agency Operating System Dashboard v3"""
 import os
 import json
 import secrets
 import io
+import csv
+import hashlib
+import time
 from datetime import datetime, timedelta
 from typing import Optional
+from functools import wraps
 
-from fastapi import FastAPI, Request, Form, HTTPException, Depends, Response
+from fastapi import FastAPI, Request, Form, HTTPException, Depends, Response, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from jose import jwt
 from passlib.hash import bcrypt
 
@@ -17,9 +22,15 @@ from database import get_db, init_db
 
 app = FastAPI(title="AI Growth Labs OS", docs_url=None, redoc_url=None)
 
+# Security: Rate limiting storage
+_rate_limit_store = {}
+
 SECRET_KEY = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 ALGORITHM = "HS256"
 TOKEN_EXPIRE = 24
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 templates_dir = os.path.join(os.path.dirname(__file__), "templates")
@@ -91,11 +102,37 @@ async def logout():
     response.delete_cookie("token")
     return response
 
+# ===== SECURITY: Rate Limiting =====
+def rate_limit(key_prefix: str, max_requests: int = 10, window_seconds: int = 60):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(request: Request, *args, **kwargs):
+            client_ip = request.client.host if request.client else "unknown"
+            key = f"{key_prefix}:{client_ip}"
+            now = time.time()
+            if key in _rate_limit_store:
+                requests_list = [t for t in _rate_limit_store[key] if now - t < window_seconds]
+                if len(requests_list) >= max_requests:
+                    raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
+                requests_list.append(now)
+                _rate_limit_store[key] = requests_list
+            else:
+                _rate_limit_store[key] = [now]
+            return await func(request, *args, **kwargs)
+        return wrapper
+    return decorator
+
+def log_activity(db, user_id, action, details=None, entity_type=None, entity_id=None):
+    db.execute("INSERT INTO activity_log (user_id, action, details, entity_type, entity_id) VALUES (?,?,?,?,?)",
+               (user_id, action, details, entity_type, entity_id))
+
 # ===== DASHBOARD ROUTER =====
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     user = get_current_user(request)
     if user:
+        if user["role"] == "client":
+            return RedirectResponse(url="/client-portal")
         return RedirectResponse(url="/dashboard")
     return RedirectResponse(url="/login")
 
@@ -104,15 +141,20 @@ async def dashboard(request: Request):
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/login")
+    if user["role"] == "client":
+        return RedirectResponse(url="/client-portal")
     role = user["role"]
     db = get_db()
     if role == "super_admin":
         data = _get_admin_data(db)
         template = "admin_dashboard.html"
-    elif role in ("worker", "tech_seo"):
+    elif role == "operations_manager":
+        data = _get_ops_manager_data(db)
+        template = "ops_dashboard.html"
+    elif role in ("worker", "tech_seo", "content_writer", "link_builder"):
         data = _get_worker_data(db, user["id"])
         template = "worker_dashboard.html"
-    elif role == "sales":
+    elif role in ("sales", "account_manager"):
         data = _get_sales_data(db, user["id"])
         template = "sales_dashboard.html"
     elif role == "social_media":
@@ -176,11 +218,63 @@ async def client_detail(client_id: int, request: Request):
         "reports": reports, "package_tasks": package_tasks
     })
 
+# ===== CLIENT PORTAL =====
+@app.get("/client-portal", response_class=HTMLResponse)
+async def client_portal(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login")
+    if user["role"] != "client":
+        return RedirectResponse(url="/dashboard")
+    db = get_db()
+    # Find client record linked to this user
+    client = db.execute("SELECT * FROM clients WHERE email=?", (user["email"],)).fetchone()
+    if not client:
+        # Fallback: try to find by username match
+        client = db.execute("SELECT * FROM clients WHERE contact_name=?", (user["full_name"],)).fetchone()
+    data = {"user": user, "request": request}
+    if client:
+        client = dict(client)
+        data["client"] = client
+        projects = [dict(r) for r in db.execute("""
+            SELECT p.*, u.full_name as worker_name FROM projects p 
+            LEFT JOIN users u ON p.assigned_worker_id=u.id WHERE p.client_id=? ORDER BY p.created_at DESC
+        """, (client["id"],)).fetchall()]
+        data["projects"] = projects
+        tasks_all = []
+        for p in projects:
+            tasks_all += [dict(r) for r in db.execute("SELECT * FROM tasks WHERE project_id=? ORDER BY order_num", (p["id"],)).fetchall()]
+        data["tasks"] = tasks_all
+        data["reports"] = [dict(r) for r in db.execute("SELECT * FROM client_reports WHERE client_id=? AND sent_to_client=1 ORDER BY created_at DESC", (client["id"],)).fetchall()]
+        data["invoices"] = [dict(r) for r in db.execute("SELECT * FROM invoices WHERE client_id=? ORDER BY created_at DESC", (client["id"],)).fetchall()]
+        data["rankings"] = [dict(r) for r in db.execute("SELECT * FROM keyword_rankings WHERE client_id=? ORDER BY tracked_date DESC LIMIT 50", (client["id"],)).fetchall()]
+        data["approvals"] = [dict(r) for r in db.execute("SELECT * FROM approval_requests WHERE client_id=? ORDER BY created_at DESC", (client["id"],)).fetchall()]
+        total_tasks = len(tasks_all)
+        completed = sum(1 for t in tasks_all if t["status"] == "completed")
+        data["stats"] = {
+            "total_projects": len(projects),
+            "total_tasks": total_tasks,
+            "completed_tasks": completed,
+            "completion_pct": round(completed/total_tasks*100) if total_tasks else 0,
+            "pending_approvals": sum(1 for a in data["approvals"] if a["status"] == "pending"),
+        }
+    else:
+        data["client"] = None
+        data["projects"] = []
+        data["tasks"] = []
+        data["reports"] = []
+        data["invoices"] = []
+        data["rankings"] = []
+        data["approvals"] = []
+        data["stats"] = {"total_projects": 0, "total_tasks": 0, "completed_tasks": 0, "completion_pct": 0, "pending_approvals": 0}
+    db.close()
+    return templates.TemplateResponse("client_portal.html", data)
+
 # ===== TEAM MONITOR PAGE (Admin) =====
 @app.get("/monitor", response_class=HTMLResponse)
 async def monitor_page(request: Request):
     user = get_current_user(request)
-    if not user or user["role"] != "super_admin":
+    if not user or user["role"] not in ("super_admin", "operations_manager"):
         return RedirectResponse(url="/login")
     db = get_db()
     workers = [dict(r) for r in db.execute("SELECT * FROM users WHERE role != 'super_admin' AND is_active=1 ORDER BY role, full_name").fetchall()]
@@ -799,6 +893,393 @@ async def save_chat(request: Request):
     db.commit()
     db.close()
     return {"message": "Chat saved"}
+
+# ===== TIME TRACKING =====
+@app.post("/api/time/start")
+async def start_timer(request: Request):
+    user = require_auth(request)
+    data = await request.json()
+    db = get_db()
+    # Check for active timer
+    active = db.execute("SELECT id FROM time_entries WHERE user_id=? AND end_time IS NULL", (user["id"],)).fetchone()
+    if active:
+        db.close()
+        return JSONResponse({"error": "You already have an active timer. Stop it first."}, status_code=400)
+    task = db.execute("SELECT t.*, p.id as proj_id FROM tasks t LEFT JOIN projects p ON t.project_id=p.id WHERE t.id=?", (data["task_id"],)).fetchone()
+    if not task:
+        db.close()
+        raise HTTPException(status_code=404, detail="Task not found")
+    db.execute("INSERT INTO time_entries (user_id, task_id, project_id, start_time) VALUES (?,?,?,datetime('now'))",
+               (user["id"], data["task_id"], task["proj_id"]))
+    db.execute("UPDATE tasks SET status='in_progress' WHERE id=? AND status='pending'", (data["task_id"],))
+    log_activity(db, user["id"], "timer_started", f"Started timer on task #{data['task_id']}", "task", data["task_id"])
+    db.commit()
+    db.close()
+    return {"message": "Timer started"}
+
+@app.post("/api/time/stop")
+async def stop_timer(request: Request):
+    user = require_auth(request)
+    data = await request.json()
+    db = get_db()
+    entry = db.execute("SELECT * FROM time_entries WHERE user_id=? AND end_time IS NULL", (user["id"],)).fetchone()
+    if not entry:
+        db.close()
+        return JSONResponse({"error": "No active timer found"}, status_code=400)
+    entry = dict(entry)
+    start = datetime.fromisoformat(entry["start_time"])
+    now = datetime.now()
+    hours = round((now - start).total_seconds() / 3600, 2)
+    db.execute("UPDATE time_entries SET end_time=datetime('now'), hours=?, notes=? WHERE id=?",
+               (hours, data.get("notes", ""), entry["id"]))
+    log_activity(db, user["id"], "timer_stopped", f"Logged {hours}h on task #{entry['task_id']}", "task", entry["task_id"])
+    db.commit()
+    db.close()
+    return {"message": f"Timer stopped. {hours} hours logged.", "hours": hours}
+
+@app.get("/api/time/active")
+async def get_active_timer(request: Request):
+    user = require_auth(request)
+    db = get_db()
+    entry = db.execute("""SELECT te.*, t.title as task_title, p.title as project_title 
+        FROM time_entries te LEFT JOIN tasks t ON te.task_id=t.id LEFT JOIN projects p ON te.project_id=p.id 
+        WHERE te.user_id=? AND te.end_time IS NULL""", (user["id"],)).fetchone()
+    db.close()
+    if entry:
+        entry = dict(entry)
+        start = datetime.fromisoformat(entry["start_time"])
+        entry["elapsed_minutes"] = round((datetime.now() - start).total_seconds() / 60, 1)
+    return {"active_timer": dict(entry) if entry else None}
+
+@app.get("/api/time/entries")
+async def get_time_entries(request: Request):
+    user = require_auth(request)
+    db = get_db()
+    if user["role"] in ("super_admin", "operations_manager", "finance"):
+        entries = [dict(r) for r in db.execute("""
+            SELECT te.*, t.title as task_title, u.full_name as worker_name, p.title as project_title
+            FROM time_entries te LEFT JOIN tasks t ON te.task_id=t.id LEFT JOIN users u ON te.user_id=u.id 
+            LEFT JOIN projects p ON te.project_id=p.id ORDER BY te.created_at DESC LIMIT 100
+        """).fetchall()]
+    else:
+        entries = [dict(r) for r in db.execute("""
+            SELECT te.*, t.title as task_title, p.title as project_title
+            FROM time_entries te LEFT JOIN tasks t ON te.task_id=t.id LEFT JOIN projects p ON te.project_id=p.id 
+            WHERE te.user_id=? ORDER BY te.created_at DESC LIMIT 50
+        """, (user["id"],)).fetchall()]
+    db.close()
+    return {"entries": entries}
+
+# ===== INVOICE SYSTEM =====
+def _generate_invoice_number(db):
+    year = datetime.now().year
+    month = datetime.now().month
+    count = db.execute("SELECT COUNT(*) FROM invoices WHERE invoice_number LIKE ?", (f"INV-{year}-%",)).fetchone()[0]
+    return f"INV-{year}-{count+1:04d}"
+
+@app.post("/api/invoices")
+async def create_invoice(request: Request):
+    user = require_role(request, ["super_admin", "finance"])
+    data = await request.json()
+    db = get_db()
+    inv_num = _generate_invoice_number(db)
+    items = data.get("items", [])
+    subtotal = sum(item.get("quantity", 1) * item.get("rate", 0) for item in items)
+    tax_rate = data.get("tax_rate", 0)
+    tax_amount = round(subtotal * tax_rate / 100, 2)
+    total = round(subtotal + tax_amount, 2)
+    c = db.cursor()
+    c.execute("""INSERT INTO invoices (client_id, invoice_number, due_date, subtotal, tax_rate, tax_amount, total, status, notes, created_by)
+                 VALUES (?,?,?,?,?,?,?,?,?,?)""",
+              (data["client_id"], inv_num, data.get("due_date"), subtotal, tax_rate, tax_amount, total, "draft", data.get("notes"), user["id"]))
+    invoice_id = c.lastrowid
+    for item in items:
+        amount = round(item.get("quantity", 1) * item.get("rate", 0), 2)
+        c.execute("INSERT INTO invoice_items (invoice_id, description, quantity, rate, amount) VALUES (?,?,?,?,?)",
+                  (invoice_id, item["description"], item.get("quantity", 1), item.get("rate", 0), amount))
+    log_activity(db, user["id"], "invoice_created", f"Invoice {inv_num} for ${total}", "invoice", invoice_id)
+    db.commit()
+    db.close()
+    return {"id": invoice_id, "invoice_number": inv_num, "total": total}
+
+@app.get("/api/invoices")
+async def list_invoices(request: Request):
+    user = require_auth(request)
+    db = get_db()
+    if user["role"] in ("super_admin", "finance", "operations_manager"):
+        invoices = [dict(r) for r in db.execute("""
+            SELECT i.*, c.business_name FROM invoices i LEFT JOIN clients c ON i.client_id=c.id ORDER BY i.created_at DESC
+        """).fetchall()]
+    elif user["role"] == "client":
+        client = db.execute("SELECT id FROM clients WHERE email=?", (user["email"],)).fetchone()
+        cid = client["id"] if client else 0
+        invoices = [dict(r) for r in db.execute("SELECT * FROM invoices WHERE client_id=? ORDER BY created_at DESC", (cid,)).fetchall()]
+    else:
+        invoices = []
+    db.close()
+    return {"invoices": invoices}
+
+@app.put("/api/invoices/{invoice_id}/status")
+async def update_invoice_status(invoice_id: int, request: Request):
+    user = require_role(request, ["super_admin", "finance"])
+    data = await request.json()
+    db = get_db()
+    new_status = data["status"]
+    paid_date = "datetime('now')" if new_status == "paid" else "NULL"
+    if new_status == "paid":
+        db.execute("UPDATE invoices SET status=?, paid_date=datetime('now'), updated_at=datetime('now') WHERE id=?", (new_status, invoice_id))
+        # Auto-create payment record
+        inv = db.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+        if inv:
+            db.execute("INSERT INTO payments (client_id, amount, status, due_date, paid_date, invoice_number) VALUES (?,?,?,?,datetime('now'),?)",
+                       (inv["client_id"], inv["total"], "paid", inv["due_date"], inv["invoice_number"]))
+    else:
+        db.execute("UPDATE invoices SET status=?, updated_at=datetime('now') WHERE id=?", (new_status, invoice_id))
+    log_activity(db, user["id"], "invoice_status_updated", f"Invoice #{invoice_id} → {new_status}", "invoice", invoice_id)
+    db.commit()
+    db.close()
+    return {"message": f"Invoice status updated to {new_status}"}
+
+@app.get("/api/invoices/{invoice_id}/download")
+async def download_invoice(invoice_id: int, request: Request):
+    user = require_auth(request)
+    db = get_db()
+    inv = db.execute("SELECT i.*, c.business_name, c.contact_name, c.email as client_email, c.phone as client_phone, c.location as client_location FROM invoices i LEFT JOIN clients c ON i.client_id=c.id WHERE i.id=?", (invoice_id,)).fetchone()
+    if not inv:
+        db.close()
+        raise HTTPException(status_code=404)
+    inv = dict(inv)
+    items = [dict(r) for r in db.execute("SELECT * FROM invoice_items WHERE invoice_id=?", (invoice_id,)).fetchall()]
+    db.close()
+    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice {inv['invoice_number']}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}body{{font-family:Inter,sans-serif;background:#fff;color:#333;padding:40px;max-width:800px;margin:0 auto}}
+.inv-header{{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;padding-bottom:20px;border-bottom:3px solid #0891B2}}
+.inv-logo{{font-size:24px;font-weight:800;color:#0A1628}}.inv-logo span{{color:#0891B2}}
+.inv-title{{font-size:32px;font-weight:800;color:#0A1628;text-align:right}}
+.inv-meta{{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-bottom:30px}}
+.inv-meta h4{{color:#0891B2;font-size:12px;text-transform:uppercase;margin-bottom:8px}}
+.inv-meta p{{font-size:14px;margin:3px 0}}
+table{{width:100%;border-collapse:collapse;margin:20px 0}}th{{background:#0A1628;color:#fff;padding:12px;text-align:left;font-size:13px}}
+td{{padding:12px;border-bottom:1px solid #eee;font-size:14px}}.text-right{{text-align:right}}
+.totals{{margin-top:20px;text-align:right}}.totals div{{margin:6px 0;font-size:14px}}.totals .total{{font-size:22px;font-weight:800;color:#0A1628;border-top:2px solid #0A1628;padding-top:10px;margin-top:10px}}
+.badge{{display:inline-block;padding:4px 12px;border-radius:50px;font-size:12px;font-weight:700}}
+.badge-paid{{background:#d1fae5;color:#059669}}.badge-draft{{background:#e2e8f0;color:#64748b}}.badge-sent{{background:#dbeafe;color:#2563eb}}.badge-overdue{{background:#fecaca;color:#dc2626}}
+.footer{{margin-top:40px;padding-top:20px;border-top:1px solid #eee;text-align:center;color:#999;font-size:12px}}
+@media print{{body{{padding:20px}}}}
+</style></head><body>
+<div class="inv-header"><div><div class="inv-logo">AI Growth<span>Labs</span></div><p style="color:#64748b;font-size:13px">AI-Powered SEO & Reputation Management</p></div><div class="inv-title">INVOICE</div></div>
+<div class="inv-meta"><div><h4>Bill To</h4><p><strong>{inv.get('business_name','')}</strong></p><p>{inv.get('contact_name','')}</p><p>{inv.get('client_email','')}</p><p>{inv.get('client_phone','')}</p><p>{inv.get('client_location','')}</p></div>
+<div style="text-align:right"><h4>Invoice Details</h4><p><strong>Invoice #:</strong> {inv['invoice_number']}</p><p><strong>Issue Date:</strong> {inv.get('issue_date','')}</p><p><strong>Due Date:</strong> {inv.get('due_date','')}</p><p><strong>Status:</strong> <span class="badge badge-{inv['status']}">{inv['status'].upper()}</span></p></div></div>
+<table><thead><tr><th>Description</th><th class="text-right">Qty</th><th class="text-right">Rate</th><th class="text-right">Amount</th></tr></thead><tbody>"""
+    for item in items:
+        html += f'<tr><td>{item["description"]}</td><td class="text-right">{item["quantity"]}</td><td class="text-right">${item["rate"]:,.2f}</td><td class="text-right">${item["amount"]:,.2f}</td></tr>'
+    html += f"""</tbody></table>
+<div class="totals"><div>Subtotal: ${inv['subtotal']:,.2f}</div><div>Tax ({inv['tax_rate']}%): ${inv['tax_amount']:,.2f}</div><div class="total">Total: ${inv['total']:,.2f}</div></div>"""
+    if inv.get("notes"):
+        html += f'<div style="margin-top:30px;background:#f8fafc;padding:16px;border-radius:8px"><h4 style="font-size:13px;color:#64748b;margin-bottom:6px">Notes</h4><p style="font-size:14px">{inv["notes"]}</p></div>'
+    html += '<div class="footer"><p>AI Growth Labs | Thank you for your business!</p></div></body></html>'
+    return HTMLResponse(content=html)
+
+# ===== FILE UPLOADS =====
+@app.post("/api/upload")
+async def upload_file(request: Request, file: UploadFile = File(...), related_type: str = Form(...), related_id: int = Form(...)):
+    user = require_auth(request)
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    safe_filename = f"{int(time.time())}_{file.filename.replace('..', '').replace('/', '_')}"
+    filepath = os.path.join(UPLOAD_DIR, safe_filename)
+    with open(filepath, "wb") as f:
+        f.write(contents)
+    db = get_db()
+    db.execute("INSERT INTO file_attachments (related_type, related_id, filename, filepath, filesize, mime_type, uploaded_by) VALUES (?,?,?,?,?,?,?)",
+               (related_type, related_id, file.filename, safe_filename, len(contents), file.content_type, user["id"]))
+    log_activity(db, user["id"], "file_uploaded", f"Uploaded {file.filename}", related_type, related_id)
+    db.commit()
+    db.close()
+    return {"message": "File uploaded", "filename": safe_filename}
+
+@app.get("/uploads/{filename}")
+async def serve_upload(filename: str, request: Request):
+    user = require_auth(request)
+    filepath = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404)
+    with open(filepath, "rb") as f:
+        content = f.read()
+    return Response(content=content, media_type="application/octet-stream",
+                    headers={"Content-Disposition": f"inline; filename={filename}"})
+
+# ===== APPROVAL REQUESTS =====
+@app.post("/api/approvals")
+async def create_approval(request: Request):
+    user = require_auth(request)
+    data = await request.json()
+    db = get_db()
+    c = db.cursor()
+    c.execute("""INSERT INTO approval_requests (task_id, project_id, client_id, request_type, title, description, requested_by) VALUES (?,?,?,?,?,?,?)""",
+              (data.get("task_id"), data.get("project_id"), data.get("client_id"), data.get("request_type", "content"),
+               data["title"], data.get("description"), user["id"]))
+    approval_id = c.lastrowid
+    log_activity(db, user["id"], "approval_requested", f"Approval: {data['title']}", "approval", approval_id)
+    db.commit()
+    db.close()
+    return {"id": approval_id, "message": "Approval request created"}
+
+@app.put("/api/approvals/{approval_id}")
+async def respond_approval(approval_id: int, request: Request):
+    user = require_auth(request)
+    data = await request.json()
+    db = get_db()
+    db.execute("UPDATE approval_requests SET status=?, reviewed_by=?, review_notes=?, reviewed_at=datetime('now') WHERE id=?",
+               (data["status"], user["id"], data.get("review_notes"), approval_id))
+    log_activity(db, user["id"], "approval_responded", f"Approval #{approval_id} → {data['status']}", "approval", approval_id)
+    db.commit()
+    db.close()
+    return {"message": f"Approval {data['status']}"}
+
+# ===== DATA EXPORT =====
+@app.get("/api/export/{table_name}")
+async def export_data(table_name: str, request: Request):
+    user = require_role(request, ["super_admin", "finance", "operations_manager"])
+    allowed = {"clients", "payments", "expenses", "invoices", "tasks", "projects", "time_entries"}
+    if table_name not in allowed:
+        raise HTTPException(status_code=400, detail=f"Export not allowed for '{table_name}'")
+    db = get_db()
+    rows = [dict(r) for r in db.execute(f"SELECT * FROM {table_name}").fetchall()]
+    db.close()
+    if not rows:
+        return Response(content="No data", media_type="text/plain")
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={table_name}_{datetime.now().strftime('%Y%m%d')}.csv"}
+    )
+
+# ===== ACTIVITY TIMELINE =====
+@app.get("/api/activity")
+async def get_activity(request: Request):
+    user = require_auth(request)
+    db = get_db()
+    if user["role"] in ("super_admin", "operations_manager"):
+        activities = [dict(r) for r in db.execute("""
+            SELECT al.*, u.full_name as user_name FROM activity_log al LEFT JOIN users u ON al.user_id=u.id ORDER BY al.created_at DESC LIMIT 50
+        """).fetchall()]
+    else:
+        activities = [dict(r) for r in db.execute("""
+            SELECT al.*, u.full_name as user_name FROM activity_log al LEFT JOIN users u ON al.user_id=u.id WHERE al.user_id=? ORDER BY al.created_at DESC LIMIT 30
+        """, (user["id"],)).fetchall()]
+    db.close()
+    return {"activities": activities}
+
+# ===== OPS MANAGER DATA =====
+def _get_ops_manager_data(db):
+    clients = [dict(r) for r in db.execute("SELECT * FROM clients WHERE status='active' ORDER BY business_name").fetchall()]
+    projects = [dict(r) for r in db.execute("""
+        SELECT p.*, c.business_name, u.full_name as worker_name FROM projects p 
+        LEFT JOIN clients c ON p.client_id=c.id LEFT JOIN users u ON p.assigned_worker_id=u.id ORDER BY p.created_at DESC
+    """).fetchall()]
+    workers = [dict(r) for r in db.execute("SELECT id, full_name, role, rank FROM users WHERE role NOT IN ('super_admin','client','finance') AND is_active=1 ORDER BY role, full_name").fetchall()]
+    for w in workers:
+        w["active_tasks"] = db.execute("SELECT COUNT(*) FROM tasks WHERE assigned_to=? AND status='in_progress'", (w["id"],)).fetchone()[0]
+        w["total_hours"] = db.execute("SELECT COALESCE(SUM(hours),0) FROM time_entries WHERE user_id=?", (w["id"],)).fetchone()[0]
+    tasks = [dict(r) for r in db.execute("""
+        SELECT t.*, u.full_name as assigned_name, p.title as project_title FROM tasks t 
+        LEFT JOIN users u ON t.assigned_to=u.id LEFT JOIN projects p ON t.project_id=p.id ORDER BY t.created_at DESC LIMIT 50
+    """).fetchall()]
+    overdue_tasks = [dict(r) for r in db.execute("""
+        SELECT t.*, u.full_name as assigned_name, p.title as project_title FROM tasks t 
+        LEFT JOIN users u ON t.assigned_to=u.id LEFT JOIN projects p ON t.project_id=p.id 
+        WHERE t.due_date IS NOT NULL AND t.due_date < date('now') AND t.status != 'completed' ORDER BY t.due_date
+    """).fetchall()]
+    pending_approvals = [dict(r) for r in db.execute("SELECT * FROM approval_requests WHERE status='pending' ORDER BY created_at DESC").fetchall()]
+    active_projects = db.execute("SELECT COUNT(*) FROM projects WHERE status='in_progress'").fetchone()[0]
+    total_tasks = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    completed_tasks = db.execute("SELECT COUNT(*) FROM tasks WHERE status='completed'").fetchone()[0]
+    return {
+        "clients": clients, "projects": projects, "workers": workers, "tasks": tasks,
+        "overdue_tasks": overdue_tasks, "pending_approvals": pending_approvals,
+        "stats": {
+            "active_projects": active_projects, "total_tasks": total_tasks, "completed_tasks": completed_tasks,
+            "task_completion": round(completed_tasks/total_tasks*100) if total_tasks else 0,
+            "overdue_count": len(overdue_tasks), "pending_approvals": len(pending_approvals),
+        }
+    }
+
+# ===== KEYWORD RANKINGS =====
+@app.post("/api/rankings")
+async def add_ranking(request: Request):
+    user = require_role(request, ["super_admin", "operations_manager", "worker", "tech_seo"])
+    data = await request.json()
+    db = get_db()
+    prev = db.execute("SELECT position FROM keyword_rankings WHERE client_id=? AND keyword=? ORDER BY tracked_date DESC LIMIT 1",
+                      (data["client_id"], data["keyword"])).fetchone()
+    prev_pos = prev["position"] if prev else None
+    db.execute("INSERT INTO keyword_rankings (client_id, keyword, position, previous_position, search_volume, url) VALUES (?,?,?,?,?,?)",
+               (data["client_id"], data["keyword"], data["position"], prev_pos, data.get("search_volume", 0), data.get("url")))
+    db.commit()
+    db.close()
+    return {"message": "Ranking recorded"}
+
+@app.get("/api/rankings/{client_id}")
+async def get_rankings(client_id: int, request: Request):
+    user = require_auth(request)
+    db = get_db()
+    if client_id == 0:
+        rankings = [dict(r) for r in db.execute("SELECT * FROM keyword_rankings ORDER BY tracked_date DESC, keyword LIMIT 200").fetchall()]
+    else:
+        rankings = [dict(r) for r in db.execute("SELECT * FROM keyword_rankings WHERE client_id=? ORDER BY tracked_date DESC, keyword LIMIT 100", (client_id,)).fetchall()]
+    db.close()
+    return {"rankings": rankings}
+
+# ===== CONTRACTS =====
+@app.get("/api/contracts")
+async def list_contracts(request: Request):
+    user = require_auth(request)
+    db = get_db()
+    contracts = [dict(r) for r in db.execute("SELECT * FROM contracts ORDER BY created_at DESC").fetchall()]
+    db.close()
+    return {"contracts": contracts}
+
+@app.post("/api/contracts")
+async def create_contract(request: Request):
+    user = require_role(request, ["super_admin", "sales", "account_manager"])
+    data = await request.json()
+    db = get_db()
+    c = db.cursor()
+    c.execute("""INSERT INTO contracts (client_id, title, start_date, end_date, terms, status, monthly_value, auto_renew, created_by) VALUES (?,?,?,?,?,?,?,?,?)""",
+              (data["client_id"], data["title"], data.get("start_date"), data.get("end_date"), data.get("terms"),
+               data.get("status", "active"), data.get("monthly_value", 0), data.get("auto_renew", 0), user["id"]))
+    contract_id = c.lastrowid
+    log_activity(db, user["id"], "contract_created", f"Contract for client #{data['client_id']}", "contract", contract_id)
+    db.commit()
+    db.close()
+    return {"id": contract_id, "message": "Contract created"}
+
+# ===== SECURITY: Change Password =====
+@app.post("/api/change-password")
+async def change_password(request: Request):
+    user = require_auth(request)
+    data = await request.json()
+    old_pw = data.get("old_password", "")
+    new_pw = data.get("new_password", "")
+    if len(new_pw) < 8:
+        return JSONResponse({"error": "Password must be at least 8 characters"}, status_code=400)
+    db = get_db()
+    u = db.execute("SELECT password_hash FROM users WHERE id=?", (user["id"],)).fetchone()
+    if not bcrypt.verify(old_pw, u["password_hash"]):
+        db.close()
+        return JSONResponse({"error": "Current password is incorrect"}, status_code=400)
+    db.execute("UPDATE users SET password_hash=? WHERE id=?", (bcrypt.hash(new_pw), user["id"]))
+    log_activity(db, user["id"], "password_changed", "User changed password", "user", user["id"])
+    db.commit()
+    db.close()
+    return {"message": "Password changed successfully"}
 
 if __name__ == "__main__":
     import uvicorn

@@ -25,7 +25,7 @@ def init_db():
         password_hash TEXT NOT NULL,
         full_name TEXT NOT NULL,
         email TEXT,
-        role TEXT NOT NULL CHECK(role IN ('super_admin','worker','tech_seo','social_media','finance','sales')),
+        role TEXT NOT NULL CHECK(role IN ('super_admin','operations_manager','worker','tech_seo','content_writer','link_builder','social_media','finance','sales','account_manager','client')),
         rank TEXT DEFAULT 'junior',
         salary REAL DEFAULT 0,
         is_active INTEGER DEFAULT 1,
@@ -277,6 +277,121 @@ def init_db():
         created_at TEXT DEFAULT (datetime('now'))
     )''')
     
+    # Time entries (NEW - Part 1)
+    c.execute('''CREATE TABLE IF NOT EXISTS time_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
+        task_id INTEGER REFERENCES tasks(id),
+        project_id INTEGER REFERENCES projects(id),
+        start_time TEXT NOT NULL,
+        end_time TEXT,
+        hours REAL DEFAULT 0,
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # Invoices (NEW - Part 1)
+    c.execute('''CREATE TABLE IF NOT EXISTS invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        invoice_number TEXT UNIQUE NOT NULL,
+        issue_date TEXT DEFAULT (date('now')),
+        due_date TEXT,
+        subtotal REAL DEFAULT 0,
+        tax_rate REAL DEFAULT 0,
+        tax_amount REAL DEFAULT 0,
+        total REAL DEFAULT 0,
+        status TEXT DEFAULT 'draft' CHECK(status IN ('draft','sent','paid','overdue','cancelled')),
+        notes TEXT,
+        paid_date TEXT,
+        created_by INTEGER REFERENCES users(id),
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # Invoice items (NEW - Part 1)
+    c.execute('''CREATE TABLE IF NOT EXISTS invoice_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER REFERENCES invoices(id) ON DELETE CASCADE,
+        description TEXT NOT NULL,
+        quantity REAL DEFAULT 1,
+        rate REAL DEFAULT 0,
+        amount REAL DEFAULT 0
+    )''')
+    
+    # Contracts (NEW - Part 1)
+    c.execute('''CREATE TABLE IF NOT EXISTS contracts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        title TEXT NOT NULL,
+        start_date TEXT,
+        end_date TEXT,
+        terms TEXT,
+        status TEXT DEFAULT 'active' CHECK(status IN ('draft','active','expired','cancelled','renewed')),
+        monthly_value REAL DEFAULT 0,
+        auto_renew INTEGER DEFAULT 0,
+        created_by INTEGER REFERENCES users(id),
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # Keyword rankings (NEW - Part 1)
+    c.execute('''CREATE TABLE IF NOT EXISTS keyword_rankings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        keyword TEXT NOT NULL,
+        position INTEGER,
+        previous_position INTEGER,
+        search_volume INTEGER DEFAULT 0,
+        url TEXT,
+        tracked_date TEXT DEFAULT (date('now')),
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # File attachments (NEW - Part 1)
+    c.execute('''CREATE TABLE IF NOT EXISTS file_attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        related_type TEXT NOT NULL CHECK(related_type IN ('task','project','client','report','invoice')),
+        related_id INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        filepath TEXT NOT NULL,
+        filesize INTEGER DEFAULT 0,
+        mime_type TEXT,
+        uploaded_by INTEGER REFERENCES users(id),
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # Approval requests (NEW - Part 1)
+    c.execute('''CREATE TABLE IF NOT EXISTS approval_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER REFERENCES tasks(id),
+        project_id INTEGER REFERENCES projects(id),
+        client_id INTEGER REFERENCES clients(id),
+        request_type TEXT DEFAULT 'content' CHECK(request_type IN ('content','design','strategy','report','invoice')),
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','revision_needed')),
+        requested_by INTEGER REFERENCES users(id),
+        reviewed_by INTEGER,
+        review_notes TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        reviewed_at TEXT
+    )''')
+    
+    # Client locations for multi-location support (NEW - Part 1)
+    c.execute('''CREATE TABLE IF NOT EXISTS client_locations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        location_name TEXT NOT NULL,
+        address TEXT,
+        city TEXT,
+        state TEXT,
+        zip_code TEXT,
+        phone TEXT,
+        gbp_url TEXT,
+        is_primary INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
     # Package task templates (NEW)
     c.execute('''CREATE TABLE IF NOT EXISTS package_tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -384,11 +499,14 @@ def _insert_demo_data(c):
         workers = [
             ('sarah_k', 'Sarah Kim', 'sarah@aigrowth-labs.com', 'tech_seo', 'senior', 5500),
             ('alex_r', 'Alex Rodriguez', 'alex@aigrowth-labs.com', 'tech_seo', 'lead', 7000),
-            ('emily_p', 'Emily Parker', 'emily@aigrowth-labs.com', 'worker', 'senior', 5000),
-            ('david_w', 'David Washington', 'david@aigrowth-labs.com', 'worker', 'mid', 4000),
+            ('emily_p', 'Emily Parker', 'emily@aigrowth-labs.com', 'content_writer', 'senior', 5000),
+            ('david_w', 'David Washington', 'david@aigrowth-labs.com', 'link_builder', 'mid', 4000),
             ('lisa_c', 'Lisa Chen', 'lisa@aigrowth-labs.com', 'sales', 'senior', 5500),
             ('marcus_j', 'Marcus Johnson', 'marcus@aigrowth-labs.com', 'social_media', 'mid', 4500),
             ('rachel_g', 'Rachel Green', 'rachel@aigrowth-labs.com', 'finance', 'senior', 5500),
+            ('ops_manager', 'James Wilson', 'james@aigrowth-labs.com', 'operations_manager', 'director', 6000),
+            ('acct_mgr', 'Nicole Adams', 'nicole@aigrowth-labs.com', 'account_manager', 'senior', 5000),
+            ('client_chen', 'Dr. Robert Chen', 'robert@smilebright.com', 'client', 'junior', 0),
         ]
         pw = bcrypt.hash("password123")
         for uname, name, email, role, rank, salary in workers:
@@ -519,6 +637,56 @@ def _insert_demo_data(c):
         for uid, pid, title, desc, status, response in suggestions:
             c.execute('INSERT INTO suggestions (user_id, project_id, title, description, status, admin_response) VALUES (?,?,?,?,?,?)',
                       (uid, pid, title, desc, status, response))
+        
+        # Demo invoices
+        demo_invoices = [
+            (1, 'INV-2026-0001', '2026-05-01', '2026-05-15', 2997, 0, 0, 2997, 'paid', '2026-05-03'),
+            (2, 'INV-2026-0002', '2026-05-01', '2026-05-15', 6997, 0, 0, 6997, 'paid', '2026-05-02'),
+            (3, 'INV-2026-0003', '2026-05-01', '2026-05-15', 2997, 0, 0, 2997, 'sent', None),
+            (4, 'INV-2026-0004', '2026-05-01', '2026-05-15', 997, 0, 0, 997, 'overdue', None),
+            (5, 'INV-2026-0005', '2026-05-01', '2026-05-15', 2997, 0, 0, 2997, 'paid', '2026-05-03'),
+        ]
+        for cid, inv_num, issue, due, sub, tr, ta, total, status, paid in demo_invoices:
+            c.execute('INSERT OR IGNORE INTO invoices (client_id, invoice_number, issue_date, due_date, subtotal, tax_rate, tax_amount, total, status, paid_date, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,1)',
+                      (cid, inv_num, issue, due, sub, tr, ta, total, status, paid))
+        
+        # Demo invoice items
+        demo_inv_items = [
+            (1, 'Growth Pro - Monthly SEO Package', 1, 2997, 2997),
+            (2, 'Growth Elite - Premium SEO Package', 1, 6997, 6997),
+            (3, 'Growth Pro - Monthly SEO Package', 1, 2997, 2997),
+            (4, 'Growth Starter - Basic SEO Package', 1, 997, 997),
+            (5, 'Growth Pro - Monthly SEO Package', 1, 2997, 2997),
+        ]
+        for inv_id, desc, qty, rate, amt in demo_inv_items:
+            c.execute('INSERT INTO invoice_items (invoice_id, description, quantity, rate, amount) VALUES (?,?,?,?,?)',
+                      (inv_id, desc, qty, rate, amt))
+        
+        # Demo keyword rankings
+        demo_rankings = [
+            (1, 'dentist austin tx', 8, 12, 2400, 'https://smilebright-dental.com'),
+            (1, 'dental cleaning austin', 5, 7, 1200, 'https://smilebright-dental.com/services'),
+            (1, 'cosmetic dentist austin', 15, 22, 880, 'https://smilebright-dental.com/cosmetic'),
+            (1, 'emergency dentist austin tx', 3, 5, 1800, 'https://smilebright-dental.com/emergency'),
+            (2, 'personal injury lawyer dallas', 6, 10, 5400, 'https://martinezlegal.com'),
+            (2, 'car accident attorney dallas tx', 4, 8, 3200, 'https://martinezlegal.com/car-accident'),
+            (2, 'slip and fall lawyer dallas', 12, 18, 1100, 'https://martinezlegal.com/slip-fall'),
+            (3, 'italian restaurant chicago', 11, 15, 6600, 'https://bellasitalian.com'),
+            (5, 'hvac repair phoenix az', 7, 11, 2900, 'https://phoenixhvacpro.com'),
+        ]
+        for cid, kw, pos, prev, vol, url in demo_rankings:
+            c.execute('INSERT INTO keyword_rankings (client_id, keyword, position, previous_position, search_volume, url) VALUES (?,?,?,?,?,?)',
+                      (cid, kw, pos, prev, vol, url))
+        
+        # Demo contracts
+        demo_contracts = [
+            (1, 'Growth Pro Service Agreement', '2026-04-01', '2026-10-01', 'Standard 6-month agreement', 'active', 2997, 1),
+            (2, 'Growth Elite Service Agreement', '2026-03-15', '2026-09-15', 'Premium 6-month agreement with priority support', 'active', 6997, 1),
+            (4, 'Growth Starter Service Agreement', '2026-05-01', '2026-11-01', '6-month starter package', 'active', 997, 0),
+        ]
+        for cid, title, start, end, terms, status, val, renew in demo_contracts:
+            c.execute('INSERT INTO contracts (client_id, title, start_date, end_date, terms, status, monthly_value, auto_renew, created_by) VALUES (?,?,?,?,?,?,?,?,1)',
+                      (cid, title, start, end, terms, status, val, renew))
         
         # Demo API settings
         api_settings = [

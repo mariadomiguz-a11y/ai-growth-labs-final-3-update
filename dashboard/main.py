@@ -22,6 +22,17 @@ from database import get_db, init_db
 
 app = FastAPI(title="AI Growth Labs OS", docs_url=None, redoc_url=None)
 
+# Security: HTTP Headers Middleware
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    return response
+
 # Security: Rate limiting storage
 _rate_limit_store = {}
 

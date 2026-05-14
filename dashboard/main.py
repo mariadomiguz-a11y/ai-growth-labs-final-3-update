@@ -1281,6 +1281,297 @@ async def change_password(request: Request):
     db.close()
     return {"message": "Password changed successfully"}
 
+# ===== PART 2: WHITE-LABEL REPORTS =====
+@app.post("/api/reports/white-label")
+async def generate_white_label_report(request: Request):
+    user = require_role(request, ["super_admin", "finance", "operations_manager", "account_manager"])
+    data = await request.json()
+    client_id = data["client_id"]
+    db = get_db()
+    client = dict(db.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone())
+    projects = [dict(r) for r in db.execute("SELECT * FROM projects WHERE client_id=?", (client_id,)).fetchall()]
+    tasks_all = []
+    for p in projects:
+        tasks_all += [dict(r) for r in db.execute("SELECT * FROM tasks WHERE project_id=?", (p["id"],)).fetchall()]
+    payments = [dict(r) for r in db.execute("SELECT * FROM payments WHERE client_id=?", (client_id,)).fetchall()]
+    rankings = [dict(r) for r in db.execute("SELECT * FROM keyword_rankings WHERE client_id=? ORDER BY tracked_date DESC LIMIT 20", (client_id,)).fetchall()]
+    locations = [dict(r) for r in db.execute("SELECT * FROM client_locations WHERE client_id=?", (client_id,)).fetchall()]
+    
+    agency_name = data.get("agency_name", "AI Growth Labs")
+    agency_tagline = data.get("agency_tagline", "AI-Powered SEO & Reputation Management")
+    primary_color = data.get("primary_color", "#0A1628")
+    accent_color = data.get("accent_color", "#00D4FF")
+    logo_url = data.get("logo_url", "")
+    
+    report_data = json.dumps({
+        "client": client, "projects": projects, "tasks": tasks_all, "payments": payments,
+        "rankings": rankings, "locations": locations,
+        "branding": {"agency_name": agency_name, "tagline": agency_tagline, "primary_color": primary_color, "accent_color": accent_color, "logo_url": logo_url},
+        "generated_at": datetime.now().isoformat(), "generated_by": user["full_name"]
+    })
+    
+    c = db.cursor()
+    c.execute("INSERT INTO client_reports (client_id, report_type, title, report_data, created_by) VALUES (?,?,?,?,?)",
+              (client_id, "white_label", f"White-Label Report - {client['business_name']} - {datetime.now().strftime('%B %Y')}", report_data, user["id"]))
+    report_id = c.lastrowid
+    log_activity(db, user["id"], "report_generated", f"White-label report for {client['business_name']}", "report", report_id)
+    db.commit()
+    db.close()
+    return {"id": report_id, "message": "White-label report generated"}
+
+@app.get("/api/reports/{report_id}/white-label")
+async def download_white_label_report(report_id: int, request: Request):
+    user = require_auth(request)
+    db = get_db()
+    report = db.execute("SELECT r.*, c.business_name FROM client_reports r LEFT JOIN clients c ON r.client_id=c.id WHERE r.id=?", (report_id,)).fetchone()
+    db.close()
+    if not report:
+        raise HTTPException(status_code=404)
+    report = dict(report)
+    rdata = json.loads(report["report_data"]) if report["report_data"] else {}
+    client = rdata.get("client", {})
+    projects = rdata.get("projects", [])
+    tasks = rdata.get("tasks", [])
+    payments = rdata.get("payments", [])
+    rankings = rdata.get("rankings", [])
+    branding = rdata.get("branding", {})
+    
+    agency = branding.get("agency_name", "AI Growth Labs")
+    tagline = branding.get("tagline", "AI-Powered SEO & Reputation Management")
+    pc = branding.get("primary_color", "#0A1628")
+    ac = branding.get("accent_color", "#00D4FF")
+    logo = branding.get("logo_url", "")
+    
+    completed_tasks = sum(1 for t in tasks if t.get("status") == "completed")
+    total_tasks = len(tasks)
+    total_paid = sum(p.get("amount", 0) for p in payments if p.get("status") == "paid")
+    
+    logo_html = f'<img src="{logo}" style="max-height:50px;margin-bottom:12px">' if logo else ""
+    
+    rankings_html = ""
+    if rankings:
+        rankings_html = '<div class="section"><h2>Keyword Rankings</h2><table><thead><tr><th>Keyword</th><th>Position</th><th>Change</th><th>Volume</th><th>URL</th></tr></thead><tbody>'
+        for r in rankings:
+            prev = r.get("previous_position")
+            pos = r.get("position", 0)
+            if prev and prev > pos:
+                change = f'<span style="color:#059669">▲ {prev - pos}</span>'
+            elif prev and prev < pos:
+                change = f'<span style="color:#dc2626">▼ {pos - prev}</span>'
+            else:
+                change = '<span style="color:#999">—</span>'
+            rankings_html += f'<tr><td><strong>{r.get("keyword","")}</strong></td><td>{pos}</td><td>{change}</td><td>{r.get("search_volume",0)}</td><td style="font-size:11px">{r.get("url","")}</td></tr>'
+        rankings_html += '</tbody></table></div>'
+    
+    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>{report['title']}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}body{{font-family:Inter,Arial,sans-serif;background:#fff;color:#333;padding:40px}}
+.header{{background:linear-gradient(135deg,{pc},{ac}22);color:#fff;padding:40px;border-radius:12px;margin-bottom:30px;border-left:5px solid {ac}}}
+.header h1{{font-size:24px;margin-bottom:4px}}.header p{{opacity:.8;font-size:14px}}
+.section{{margin-bottom:30px}}.section h2{{font-size:18px;color:{pc};border-bottom:2px solid {ac};padding-bottom:8px;margin-bottom:16px}}
+table{{width:100%;border-collapse:collapse;margin-top:12px}}th,td{{padding:10px 12px;text-align:left;border-bottom:1px solid #eee;font-size:13px}}
+th{{background:#f7f9fc;font-weight:600}}.stat-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:30px}}
+.stat-card{{background:#f7f9fc;padding:20px;border-radius:8px;text-align:center;border-top:3px solid {ac}}}.stat-card .num{{font-size:28px;font-weight:700;color:{pc}}}
+.stat-card .label{{font-size:12px;color:#666;margin-top:4px}}.badge{{padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600}}
+.badge-paid,.badge-completed{{background:#d1fae5;color:#059669}}.badge-pending{{background:#fef3c7;color:#d97706}}
+.badge-progress,.badge-in_progress{{background:#dbeafe;color:#2563eb}}
+.footer{{margin-top:40px;padding-top:20px;border-top:2px solid #eee;text-align:center;color:#999;font-size:12px}}
+.confidential{{background:#fef3c7;padding:8px 16px;border-radius:6px;font-size:11px;color:#92400e;margin-bottom:20px;text-align:center}}
+@media print{{body{{padding:20px}}.header{{break-after:avoid}}}}
+</style></head><body>
+<div class="header">{logo_html}<h1>{agency}</h1><p>{tagline}</p><p style="margin-top:8px">Report for: <strong>{client.get('business_name','')}</strong> | {rdata.get('generated_at','')[:10]}</p></div>
+<div class="confidential">CONFIDENTIAL — Prepared exclusively for {client.get('business_name','')}</div>
+<div class="stat-grid">
+<div class="stat-card"><div class="num">{len(projects)}</div><div class="label">Active Projects</div></div>
+<div class="stat-card"><div class="num">{completed_tasks}/{total_tasks}</div><div class="label">Tasks Completed</div></div>
+<div class="stat-card"><div class="num">{round(completed_tasks/total_tasks*100) if total_tasks else 0}%</div><div class="label">Completion Rate</div></div>
+<div class="stat-card"><div class="num">${total_paid:,.0f}</div><div class="label">Total Invested</div></div>
+</div>
+{rankings_html}
+<div class="section"><h2>Projects Overview</h2><table><thead><tr><th>Project</th><th>Service</th><th>Progress</th><th>Status</th></tr></thead><tbody>"""
+    for p in projects:
+        badge = "badge-completed" if p.get("status") == "completed" else "badge-progress"
+        html += f'<tr><td>{p.get("title","")}</td><td>{p.get("service_type","")}</td><td>{p.get("progress",0)}%</td><td><span class="badge {badge}">{p.get("status","")}</span></td></tr>'
+    html += """</tbody></table></div>
+<div class="section"><h2>Task Breakdown</h2><table><thead><tr><th>Task</th><th>Priority</th><th>Status</th></tr></thead><tbody>"""
+    for t in tasks:
+        badge = "badge-completed" if t.get("status") == "completed" else ("badge-progress" if t.get("status") == "in_progress" else "badge-pending")
+        html += f'<tr><td>{t.get("title","")}</td><td>{t.get("priority","")}</td><td><span class="badge {badge}">{t.get("status","")}</span></td></tr>'
+    html += """</tbody></table></div>
+<div class="section"><h2>Payment History</h2><table><thead><tr><th>Invoice</th><th>Amount</th><th>Due Date</th><th>Status</th></tr></thead><tbody>"""
+    for pay in payments:
+        badge = "badge-paid" if pay.get("status") == "paid" else "badge-pending"
+        html += f'<tr><td>{pay.get("invoice_number","")}</td><td>${pay.get("amount",0):,.0f}</td><td>{pay.get("due_date","")}</td><td><span class="badge {badge}">{pay.get("status","")}</span></td></tr>'
+    html += f"""</tbody></table></div>
+<div class="footer"><p>{agency} | {tagline}</p><p>Generated by {rdata.get('generated_by','System')} on {rdata.get('generated_at','')[:10]}</p></div>
+</body></html>"""
+    return HTMLResponse(content=html)
+
+# ===== PART 2: EMAIL SENDING =====
+@app.post("/api/email/send")
+async def send_email(request: Request):
+    user = require_role(request, ["super_admin", "finance", "operations_manager", "account_manager"])
+    data = await request.json()
+    db = get_db()
+    smtp = db.execute("SELECT * FROM api_settings WHERE provider='smtp'").fetchone()
+    if not smtp or not smtp["api_key"]:
+        db.close()
+        return JSONResponse({"error": "SMTP not configured. Go to Settings → SMTP to configure email sending."}, status_code=400)
+    smtp = dict(smtp)
+    config = json.loads(smtp.get("config") or "{}")
+    
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = data.get("subject", "AI Growth Labs Report")
+        msg["From"] = config.get("from_email", smtp["api_key"])
+        msg["To"] = data["to_email"]
+        
+        if data.get("html_body"):
+            msg.attach(MIMEText(data["html_body"], "html"))
+        elif data.get("body"):
+            msg.attach(MIMEText(data["body"], "plain"))
+        
+        host = config.get("host", "smtp.gmail.com")
+        port = int(config.get("port", 587))
+        
+        with smtplib.SMTP(host, port, timeout=10) as server:
+            server.starttls()
+            server.login(config.get("from_email", smtp["api_key"]), smtp["api_key"])
+            server.send_message(msg)
+        
+        log_activity(db, user["id"], "email_sent", f"Email to {data['to_email']}: {data.get('subject','')}", "email", 0)
+        db.commit()
+        db.close()
+        return {"message": f"Email sent to {data['to_email']}"}
+    except Exception as e:
+        db.close()
+        return JSONResponse({"error": f"Email failed: {str(e)}"}, status_code=500)
+
+@app.post("/api/reports/{report_id}/email")
+async def email_report(report_id: int, request: Request):
+    user = require_role(request, ["super_admin", "finance", "operations_manager"])
+    data = await request.json()
+    db = get_db()
+    report = db.execute("SELECT r.*, c.business_name, c.email as client_email FROM client_reports r LEFT JOIN clients c ON r.client_id=c.id WHERE r.id=?", (report_id,)).fetchone()
+    if not report:
+        db.close()
+        raise HTTPException(status_code=404)
+    report = dict(report)
+    
+    to_email = data.get("to_email", report.get("client_email", ""))
+    if not to_email:
+        db.close()
+        return JSONResponse({"error": "No email address provided"}, status_code=400)
+    
+    smtp = db.execute("SELECT * FROM api_settings WHERE provider='smtp'").fetchone()
+    if not smtp or not smtp["api_key"]:
+        db.close()
+        return JSONResponse({"error": "SMTP not configured"}, status_code=400)
+    smtp_conf = json.loads(dict(smtp).get("config") or "{}")
+    
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    
+    try:
+        rdata = json.loads(report["report_data"]) if report["report_data"] else {}
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"Your SEO Report - {report['business_name']} - {report['title']}"
+        msg["From"] = smtp_conf.get("from_email", dict(smtp)["api_key"])
+        msg["To"] = to_email
+        
+        text = f"Hi,\n\nPlease find your latest SEO performance report attached.\n\nReport: {report['title']}\nGenerated: {rdata.get('generated_at','')[:10]}\n\nPlease log in to your client portal to view full details.\n\nBest regards,\nAI Growth Labs Team"
+        msg.attach(MIMEText(text, "plain"))
+        
+        host = smtp_conf.get("host", "smtp.gmail.com")
+        port = int(smtp_conf.get("port", 587))
+        
+        with smtplib.SMTP(host, port, timeout=10) as server:
+            server.starttls()
+            server.login(smtp_conf.get("from_email", dict(smtp)["api_key"]), dict(smtp)["api_key"])
+            server.send_message(msg)
+        
+        db.execute("UPDATE client_reports SET sent_to_client=1, sent_date=datetime('now'), sent_by=? WHERE id=?", (user["id"], report_id))
+        log_activity(db, user["id"], "report_emailed", f"Report emailed to {to_email}", "report", report_id)
+        db.commit()
+        db.close()
+        return {"message": f"Report emailed to {to_email}"}
+    except Exception as e:
+        db.close()
+        return JSONResponse({"error": f"Email failed: {str(e)}"}, status_code=500)
+
+# ===== PART 2: FILE ATTACHMENTS LIST =====
+@app.get("/api/attachments/{related_type}/{related_id}")
+async def list_attachments(related_type: str, related_id: int, request: Request):
+    user = require_auth(request)
+    db = get_db()
+    files = [dict(r) for r in db.execute("""
+        SELECT f.*, u.full_name as uploader_name FROM file_attachments f
+        LEFT JOIN users u ON f.uploaded_by=u.id
+        WHERE f.related_type=? AND f.related_id=? ORDER BY f.created_at DESC
+    """, (related_type, related_id)).fetchall()]
+    db.close()
+    return {"attachments": files}
+
+# ===== PART 2: CLIENT LOCATIONS =====
+@app.post("/api/locations")
+async def add_location(request: Request):
+    user = require_role(request, ["super_admin", "operations_manager", "account_manager", "sales"])
+    data = await request.json()
+    db = get_db()
+    c = db.cursor()
+    c.execute("""INSERT INTO client_locations (client_id, location_name, address, city, state, zip_code, phone, gbp_url, gbp_cid) VALUES (?,?,?,?,?,?,?,?,?)""",
+              (data["client_id"], data["location_name"], data.get("address"), data.get("city"), data.get("state"),
+               data.get("zip_code"), data.get("phone"), data.get("gbp_url"), data.get("gbp_cid")))
+    loc_id = c.lastrowid
+    log_activity(db, user["id"], "location_added", f"Location: {data['location_name']} for client #{data['client_id']}", "location", loc_id)
+    db.commit()
+    db.close()
+    return {"id": loc_id, "message": "Location added"}
+
+@app.get("/api/locations/{client_id}")
+async def get_locations(client_id: int, request: Request):
+    user = require_auth(request)
+    db = get_db()
+    locations = [dict(r) for r in db.execute("SELECT * FROM client_locations WHERE client_id=? ORDER BY location_name", (client_id,)).fetchall()]
+    db.close()
+    return {"locations": locations}
+
+# ===== PART 2: RANKINGS CHART PAGE =====
+@app.get("/rankings/{client_id}", response_class=HTMLResponse)
+async def rankings_chart_page(client_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login")
+    db = get_db()
+    client = db.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+    if not client:
+        db.close()
+        raise HTTPException(status_code=404)
+    client = dict(client)
+    rankings = [dict(r) for r in db.execute("SELECT * FROM keyword_rankings WHERE client_id=? ORDER BY keyword, tracked_date", (client_id,)).fetchall()]
+    locations = [dict(r) for r in db.execute("SELECT * FROM client_locations WHERE client_id=?", (client_id,)).fetchall()]
+    db.close()
+    
+    keywords = {}
+    for r in rankings:
+        kw = r["keyword"]
+        if kw not in keywords:
+            keywords[kw] = {"positions": [], "current": r["position"], "previous": r.get("previous_position"), "volume": r.get("search_volume", 0), "url": r.get("url", "")}
+        keywords[kw]["positions"].append(r["position"])
+        keywords[kw]["current"] = r["position"]
+    
+    chart_data = json.dumps({"keywords": {k: v["positions"] for k, v in keywords.items()}})
+    
+    return templates.TemplateResponse("rankings_chart.html", {
+        "request": request, "user": user, "client": client,
+        "keywords": keywords, "chart_data": chart_data, "locations": locations
+    })
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

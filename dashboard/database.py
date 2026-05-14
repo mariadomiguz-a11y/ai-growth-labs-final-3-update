@@ -255,7 +255,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         client_id INTEGER REFERENCES clients(id),
         project_id INTEGER REFERENCES projects(id),
-        report_type TEXT DEFAULT 'monthly' CHECK(report_type IN ('weekly','monthly','audit','custom')),
+        report_type TEXT DEFAULT 'monthly' CHECK(report_type IN ('weekly','monthly','audit','custom','white_label')),
         title TEXT,
         report_data TEXT,
         pdf_path TEXT,
@@ -687,6 +687,18 @@ def _insert_demo_data(c):
         for cid, title, start, end, terms, status, val, renew in demo_contracts:
             c.execute('INSERT INTO contracts (client_id, title, start_date, end_date, terms, status, monthly_value, auto_renew, created_by) VALUES (?,?,?,?,?,?,?,?,1)',
                       (cid, title, start, end, terms, status, val, renew))
+        
+        # Demo client locations (multi-location support)
+        demo_locations = [
+            (1, 'SmileBright Main Office', '2100 S Lamar Blvd', 'Austin', 'TX', '78704', '(512) 555-0101', 'https://maps.google.com/smilebright-austin'),
+            (1, 'SmileBright North', '12345 N Research Blvd', 'Austin', 'TX', '78759', '(512) 555-0102', None),
+            (2, 'Martinez Legal HQ', '1600 Commerce St Suite 400', 'Dallas', 'TX', '75201', '(214) 555-0201', 'https://maps.google.com/martinez-legal'),
+            (5, 'Phoenix HVAC Main', '4500 E Van Buren St', 'Phoenix', 'AZ', '85008', '(602) 555-0501', 'https://maps.google.com/phoenix-hvac'),
+            (5, 'Phoenix HVAC - Scottsdale', '7200 E Camelback Rd', 'Scottsdale', 'AZ', '85251', '(480) 555-0502', None),
+        ]
+        for cid, name, addr, city, state, zipcode, phone, gbp in demo_locations:
+            c.execute('INSERT INTO client_locations (client_id, location_name, address, city, state, zip_code, phone, gbp_url) VALUES (?,?,?,?,?,?,?,?)',
+                      (cid, name, addr, city, state, zipcode, phone, gbp))
         
         # Demo API settings
         api_settings = [

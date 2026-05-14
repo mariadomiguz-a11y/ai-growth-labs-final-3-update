@@ -20,8 +20,13 @@
 {% if s.provider == 'claude' %}🟣 Claude Sonnet{% elif s.provider == 'chatgpt' %}🟢 ChatGPT{% elif s.provider == 'gemini' %}🔵 Google Gemini{% elif s.provider == 'smtp' %}📧 Email (SMTP){% else %}🔧 {{ s.provider }}{% endif %}
 </h3>
 <div class="setting-status">Status: {% if s.is_active %}<span class="badge badge-active">Active</span>{% else %}<span class="badge badge-pending">Not Configured</span>{% endif %}</div>
-<input id="api_key_{{ s.provider }}" type="password" value="{{ s.api_key or '' }}" placeholder="Paste API Key here..." class="form-input">
-<button class="btn btn-primary btn-full" onclick="saveApiKey('{{ s.provider }}')">Save & Activate</button>
+<input id="api_key_{{ s.provider }}" type="password" value="{{ s.api_key or '' }}" placeholder="{% if s.provider == 'smtp' %}SMTP Password / App Password{% else %}Paste API Key here...{% endif %}" class="form-input">
+{% if s.provider == 'smtp' %}
+<input id="smtp_host" placeholder="SMTP Host (smtp.gmail.com)" value="{{ (s.config_json|default('{}',true)|safe) }}" class="form-input" style="margin-top:6px;display:none">
+<input id="smtp_from" placeholder="From Email Address" class="form-input" style="margin-top:6px">
+<small style="color:#64748B">For Gmail: use an App Password from <a href="https://myaccount.google.com/apppasswords" target="_blank">Google Account Security</a></small>
+{% endif %}
+<button class="btn btn-primary btn-full" onclick="saveApiKey('{{ s.provider }}')" style="margin-top:8px">Save & Activate</button>
 </div>
 {% endfor %}
 </div>

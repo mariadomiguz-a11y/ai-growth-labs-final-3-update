@@ -1743,6 +1743,163 @@ async def search(request: Request, q: str = ""):
     db.close()
     return {"results": results}
 
+# ===== PART 4: REVENUE FORECASTING =====
+@app.get("/api/analytics/revenue")
+async def revenue_analytics(request: Request):
+    user = require_role(request, ["super_admin", "finance", "operations_manager"])
+    db = get_db()
+    
+    # Current MRR from active clients
+    mrr = db.execute("SELECT COALESCE(SUM(monthly_payment),0) FROM clients WHERE status='active'").fetchone()[0]
+    
+    # Revenue by month (from invoices)
+    monthly_rev = [dict(r) for r in db.execute("""
+        SELECT strftime('%Y-%m', issue_date) as month, SUM(total) as revenue, COUNT(*) as count 
+        FROM invoices WHERE status='paid' GROUP BY month ORDER BY month DESC LIMIT 12
+    """).fetchall()]
+    
+    # Revenue by package
+    by_package = [dict(r) for r in db.execute("""
+        SELECT package, COUNT(*) as clients, SUM(monthly_payment) as mrr 
+        FROM clients WHERE status='active' AND package IS NOT NULL GROUP BY package
+    """).fetchall()]
+    
+    # Pipeline (leads + prospects)
+    pipeline = db.execute("SELECT COALESCE(SUM(monthly_payment),0) FROM clients WHERE status IN ('lead','prospect')").fetchone()[0]
+    
+    # Churn risk (overdue invoices)
+    overdue_total = db.execute("SELECT COALESCE(SUM(total),0) FROM invoices WHERE status='overdue'").fetchone()[0]
+    
+    # Contract-based forecast (next 6 months)
+    active_contracts = db.execute("SELECT COALESCE(SUM(monthly_value),0) FROM contracts WHERE status='active'").fetchone()[0]
+    forecast = []
+    for i in range(6):
+        month_name = (datetime.now() + timedelta(days=30 * i)).strftime("%b %Y")
+        projected = mrr + (active_contracts * 0.1 * i)  # Growth estimate
+        forecast.append({"month": month_name, "projected": round(projected)})
+    
+    db.close()
+    return {
+        "mrr": mrr, "pipeline_value": pipeline, "overdue_total": overdue_total,
+        "monthly_revenue": monthly_rev, "by_package": by_package,
+        "forecast": forecast, "contract_mrr": active_contracts
+    }
+
+# ===== PART 4: DASHBOARD ANALYTICS =====
+@app.get("/api/analytics/overview")
+async def analytics_overview(request: Request):
+    user = require_role(request, ["super_admin", "operations_manager"])
+    db = get_db()
+    
+    # Task stats
+    task_by_status = {}
+    for r in db.execute("SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status").fetchall():
+        task_by_status[r["status"]] = r["cnt"]
+    
+    # Tasks by priority
+    task_by_priority = {}
+    for r in db.execute("SELECT priority, COUNT(*) as cnt FROM tasks GROUP BY priority").fetchall():
+        task_by_priority[r["priority"]] = r["cnt"]
+    
+    # Projects by service type
+    by_service = {}
+    for r in db.execute("SELECT service_type, COUNT(*) as cnt FROM projects GROUP BY service_type").fetchall():
+        by_service[r["service_type"]] = r["cnt"]
+    
+    # Clients by industry
+    by_industry = {}
+    for r in db.execute("SELECT industry, COUNT(*) as cnt FROM clients GROUP BY industry").fetchall():
+        by_industry[r["industry"]] = r["cnt"]
+    
+    # Time logged this week
+    weekly_hours = db.execute("SELECT COALESCE(SUM(hours),0) FROM time_entries WHERE start_time >= date('now','-7 days')").fetchone()[0]
+    
+    # Top performers this week
+    top_workers = [dict(r) for r in db.execute("""
+        SELECT u.full_name, u.role, COUNT(t.id) as tasks_done 
+        FROM tasks t JOIN users u ON t.assigned_to=u.id 
+        WHERE t.status='completed' GROUP BY t.assigned_to ORDER BY tasks_done DESC LIMIT 5
+    """).fetchall()]
+    
+    db.close()
+    return {
+        "task_by_status": task_by_status, "task_by_priority": task_by_priority,
+        "by_service": by_service, "by_industry": by_industry,
+        "weekly_hours": round(weekly_hours, 1), "top_workers": top_workers
+    }
+
+# ===== PART 4: ANALYTICS PAGE =====
+@app.get("/analytics", response_class=HTMLResponse)
+async def analytics_page(request: Request):
+    user = get_current_user(request)
+    if not user or user["role"] not in ("super_admin", "finance", "operations_manager"):
+        return RedirectResponse(url="/login")
+    return templates.TemplateResponse("analytics.html", {"request": request, "user": user})
+
+# ===== PART 4: INVOICE DOWNLOAD (PDF-STYLE HTML) =====
+@app.get("/api/invoices/{invoice_id}/download")
+async def download_invoice(invoice_id: int, request: Request):
+    user = require_auth(request)
+    db = get_db()
+    inv = db.execute("""SELECT i.*, c.business_name, c.contact_name, c.email, c.phone, c.address 
+                        FROM invoices i LEFT JOIN clients c ON i.client_id=c.id WHERE i.id=?""", (invoice_id,)).fetchone()
+    if not inv:
+        db.close()
+        raise HTTPException(status_code=404)
+    inv = dict(inv)
+    items = [dict(r) for r in db.execute("SELECT * FROM invoice_items WHERE invoice_id=?", (invoice_id,)).fetchall()]
+    db.close()
+    
+    items_html = ""
+    for it in items:
+        items_html += f'<tr><td>{it["description"]}</td><td style="text-align:center">{it["quantity"]}</td><td style="text-align:right">${it["rate"]:,.2f}</td><td style="text-align:right"><strong>${it["amount"]:,.2f}</strong></td></tr>'
+    
+    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice {inv['invoice_number']}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}body{{font-family:Inter,Arial,sans-serif;background:#fff;color:#333;padding:40px;max-width:800px;margin:0 auto}}
+.inv-header{{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;padding-bottom:20px;border-bottom:3px solid #0A1628}}
+.inv-header h1{{font-size:28px;color:#0A1628}}.inv-header .inv-num{{font-size:14px;color:#666}}
+.inv-meta{{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-bottom:30px}}
+.inv-meta h3{{font-size:12px;text-transform:uppercase;color:#999;margin-bottom:8px}}
+table{{width:100%;border-collapse:collapse;margin-bottom:20px}}th{{background:#0A1628;color:#fff;padding:10px 12px;text-align:left;font-size:12px;text-transform:uppercase}}
+td{{padding:10px 12px;border-bottom:1px solid #eee;font-size:13px}}
+.totals{{text-align:right;margin-top:20px}}.totals .total-row{{display:flex;justify-content:flex-end;gap:30px;padding:6px 0;font-size:14px}}
+.totals .grand-total{{font-size:20px;font-weight:700;color:#0A1628;border-top:2px solid #0A1628;padding-top:10px;margin-top:8px}}
+.badge{{display:inline-block;padding:4px 12px;border-radius:4px;font-size:12px;font-weight:600}}
+.badge-paid{{background:#d1fae5;color:#059669}}.badge-sent,.badge-pending{{background:#fef3c7;color:#d97706}}.badge-overdue{{background:#fee2e2;color:#dc2626}}
+.footer{{margin-top:40px;padding-top:20px;border-top:1px solid #eee;text-align:center;color:#999;font-size:11px}}
+@media print{{body{{padding:20px}}}}
+</style></head><body>
+<div class="inv-header"><div><h1>INVOICE</h1><p class="inv-num">{inv['invoice_number']}</p></div>
+<div style="text-align:right"><h2 style="color:#0A1628">AI Growth Labs</h2><p style="color:#666;font-size:13px">AI-Powered SEO & Reputation Management</p>
+<span class="badge badge-{inv['status']}">{inv['status'].upper()}</span></div></div>
+<div class="inv-meta"><div><h3>Bill To</h3><p><strong>{inv.get('business_name','')}</strong></p><p>{inv.get('contact_name','')}</p><p>{inv.get('email','')}</p><p>{inv.get('phone','')}</p></div>
+<div style="text-align:right"><h3>Invoice Details</h3><p>Issue Date: <strong>{inv['issue_date']}</strong></p><p>Due Date: <strong>{inv['due_date']}</strong></p>
+{f"<p>Paid Date: <strong>{inv['paid_date']}</strong></p>" if inv.get('paid_date') else ''}</div></div>
+<table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>{items_html}</tbody></table>
+<div class="totals"><div class="total-row"><span>Subtotal:</span><span>${inv['subtotal']:,.2f}</span></div>
+{"<div class='total-row'><span>Tax (" + str(inv['tax_rate']) + "%):</span><span>$" + f"{inv['tax_amount']:,.2f}" + "</span></div>" if inv.get('tax_amount') else ""}
+<div class="total-row grand-total"><span>Total:</span><span>${inv['total']:,.2f}</span></div></div>
+{f"<p style='margin-top:20px;color:#666;font-size:13px'>Notes: {inv['notes']}</p>" if inv.get('notes') else ''}
+<div class="footer"><p>AI Growth Labs | Thank you for your business!</p><p>Questions? Contact us at billing@aigrowth-labs.com</p></div>
+</body></html>"""
+    return HTMLResponse(content=html)
+
+# ===== PART 4: PROJECT PROGRESS UPDATE =====
+@app.put("/api/projects/{project_id}/progress")
+async def update_project_progress(project_id: int, request: Request):
+    user = require_auth(request)
+    data = await request.json()
+    db = get_db()
+    db.execute("UPDATE projects SET progress=? WHERE id=?", (data["progress"], project_id))
+    if data["progress"] >= 100:
+        db.execute("UPDATE projects SET status='completed' WHERE id=?", (project_id,))
+    log_activity(db, user["id"], "project_updated", f"Project #{project_id} progress → {data['progress']}%", "project", project_id)
+    db.commit()
+    db.close()
+    return {"message": f"Project progress updated to {data['progress']}%"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

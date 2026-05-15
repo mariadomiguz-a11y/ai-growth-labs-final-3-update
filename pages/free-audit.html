@@ -9,6 +9,45 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .audit-results { display:none; margin-top:40px; }
+    .audit-results.show { display:block; }
+    .score-circle { width:120px; height:120px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-direction:column; margin:0 auto 20px; border:6px solid; }
+    .score-circle.grade-a { border-color:#00D4FF; background:rgba(0,212,255,0.1); }
+    .score-circle.grade-b { border-color:#4CAF50; background:rgba(76,175,80,0.1); }
+    .score-circle.grade-c { border-color:#FF9800; background:rgba(255,152,0,0.1); }
+    .score-circle.grade-d { border-color:#F44336; background:rgba(244,67,54,0.1); }
+    .score-number { font-size:2.2rem; font-weight:800; color:var(--white); }
+    .score-grade { font-size:0.85rem; font-weight:600; color:var(--gray-300); }
+    .audit-section { background:var(--navy-800); border-radius:12px; padding:24px; margin-bottom:20px; border:1px solid rgba(255,255,255,0.06); }
+    .audit-section-header { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+    .audit-section-icon { font-size:1.5rem; }
+    .audit-section-title { font-size:1.1rem; font-weight:700; color:var(--white); flex:1; }
+    .audit-section-score { font-size:1.1rem; font-weight:700; padding:4px 14px; border-radius:20px; }
+    .score-good { background:rgba(76,175,80,0.2); color:#4CAF50; }
+    .score-warn { background:rgba(255,152,0,0.2); color:#FF9800; }
+    .score-bad { background:rgba(244,67,54,0.2); color:#F44336; }
+    .findings-list, .recs-list { list-style:none; padding:0; margin:0; }
+    .findings-list li { padding:6px 0; color:var(--gray-300); font-size:0.9rem; border-bottom:1px solid rgba(255,255,255,0.04); }
+    .findings-list li:last-child { border-bottom:none; }
+    .recs-title { font-size:0.9rem; font-weight:600; color:var(--cyan); margin:16px 0 8px; }
+    .recs-list li { padding:5px 0 5px 20px; color:var(--gray-300); font-size:0.85rem; position:relative; }
+    .recs-list li::before { content:"→"; position:absolute; left:0; color:var(--cyan); }
+    .priorities-box { background:linear-gradient(135deg, rgba(0,212,255,0.1), rgba(0,212,255,0.02)); border:1px solid rgba(0,212,255,0.2); border-radius:12px; padding:24px; margin-top:24px; }
+    .priorities-box h3 { color:var(--cyan); margin-bottom:16px; font-size:1.1rem; }
+    .priority-item { padding:10px 0; color:var(--gray-200); font-size:0.95rem; border-bottom:1px solid rgba(255,255,255,0.06); }
+    .priority-item:last-child { border-bottom:none; }
+    .audit-loading { text-align:center; padding:60px 20px; }
+    .audit-loading .spinner { width:50px; height:50px; border:4px solid rgba(0,212,255,0.2); border-top-color:var(--cyan); border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 20px; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .audit-meta { text-align:center; margin-bottom:30px; }
+    .audit-meta h2 { font-size:1.6rem; color:var(--white); margin-bottom:8px; }
+    .audit-meta p { color:var(--gray-300); font-size:0.9rem; }
+    .demo-note { background:rgba(255,152,0,0.1); border:1px solid rgba(255,152,0,0.3); border-radius:8px; padding:12px 16px; color:#FF9800; font-size:0.85rem; text-align:center; margin-top:20px; }
+    .cta-after-audit { text-align:center; margin-top:30px; padding:30px; background:linear-gradient(135deg, var(--navy-800), var(--navy-900)); border-radius:12px; border:1px solid rgba(0,212,255,0.15); }
+    .cta-after-audit h3 { color:var(--white); margin-bottom:10px; }
+    .cta-after-audit p { color:var(--gray-300); margin-bottom:20px; font-size:0.9rem; }
+  </style>
 </head>
 <body>
   <header class="header"><div class="container"><nav class="nav"><a href="../index.html" class="nav-logo">AI<span>Growth</span>Labs</a><div class="nav-links"><div class="nav-dropdown"><a href="#">Services</a><div class="nav-dropdown-content"><a href="local-seo.html">Local SEO</a><a href="gbp-optimization.html">GBP Optimization</a><a href="reputation-management.html">Reputation Management</a><a href="ai-seo.html">AI SEO Services</a><a href="paid-advertising.html">Facebook & Google Ads</a><a href="social-media.html">Social Media Management</a><a href="content-creation.html">Content Creation</a></div></div><div class="nav-dropdown"><a href="#">Industries</a><div class="nav-dropdown-content"><a href="seo-for-dentists.html">SEO for Dentists</a><a href="seo-for-lawyers.html">SEO for Lawyers</a><a href="seo-for-restaurants.html">SEO for Restaurants</a><a href="seo-for-plumbers.html">SEO for Plumbers</a></div></div><a href="case-studies.html">Case Studies</a><a href="about.html">About</a><a href="blog.html">Blog</a><a href="contact.html">Contact</a><div class="nav-cta"><a href="free-audit.html" class="btn btn-primary">Free Audit</a></div></div><button class="nav-toggle" aria-label="Toggle menu"><span></span><span></span><span></span></button></nav></div></header>
@@ -20,7 +59,7 @@
     </div>
   </section>
 
-  <section class="section">
+  <section class="section" id="audit-form-section">
     <div class="container">
       <div class="service-detail-grid">
         <div>
@@ -37,15 +76,15 @@
         <div>
           <div class="audit-form">
             <h3 style="margin-bottom:8px;">Get Your Free Audit</h3>
-            <p style="color:var(--text-light);font-size:0.9rem;margin-bottom:24px;">Fill out the form below and we'll send your audit within 24 hours.</p>
-            <form>
-              <div class="form-group"><label>Business Name *</label><input type="text" placeholder="Your business name" required></div>
-              <div class="form-group"><label>Full Name *</label><input type="text" placeholder="Your full name" required></div>
-              <div class="form-group"><label>Email *</label><input type="email" placeholder="your@email.com" required></div>
-              <div class="form-group"><label>Phone *</label><input type="tel" placeholder="(555) 123-4567" required></div>
-              <div class="form-group"><label>Website URL</label><input type="url" placeholder="https://yourwebsite.com"></div>
+            <p style="color:var(--text-light);font-size:0.9rem;margin-bottom:24px;">Fill out the form below and get your instant audit results.</p>
+            <form id="auditForm" onsubmit="runAudit(event)">
+              <div class="form-group"><label>Business Name *</label><input type="text" id="business_name" placeholder="Your business name" required></div>
+              <div class="form-group"><label>Full Name *</label><input type="text" id="contact_name" placeholder="Your full name" required></div>
+              <div class="form-group"><label>Email *</label><input type="email" id="email" placeholder="your@email.com" required></div>
+              <div class="form-group"><label>Phone *</label><input type="tel" id="phone" placeholder="(555) 123-4567" required></div>
+              <div class="form-group"><label>Website URL *</label><input type="url" id="website" placeholder="https://yourwebsite.com" required></div>
               <div class="form-group"><label>Business Type</label>
-                <select>
+                <select id="industry">
                   <option value="">Select your industry</option>
                   <option value="dental">Dental Practice</option>
                   <option value="legal">Law Firm</option>
@@ -55,15 +94,58 @@
                   <option value="medical">Medical Practice</option>
                   <option value="realestate">Real Estate</option>
                   <option value="auto">Auto Repair</option>
+                  <option value="construction">Construction</option>
+                  <option value="ecommerce">E-Commerce</option>
                   <option value="other">Other</option>
                 </select>
               </div>
-              <div class="form-group"><label>City & State</label><input type="text" placeholder="e.g., New York, NY"></div>
-              <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;">Get My Free Audit &rarr;</button>
-              <p style="text-align:center;font-size:0.8rem;color:var(--text-light);margin-top:12px;">No credit card required. No obligations. 100% free.</p>
+              <div class="form-group"><label>City & State</label><input type="text" id="city" placeholder="e.g., London, UK"></div>
+              <button type="submit" class="btn btn-primary" id="auditBtn" style="width:100%;justify-content:center;">Run Free Audit Now &rarr;</button>
+              <p style="text-align:center;font-size:0.8rem;color:var(--text-light);margin-top:12px;">No credit card required. Instant results. 100% free.</p>
             </form>
           </div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Loading State -->
+  <section class="section audit-loading" id="audit-loading" style="display:none;">
+    <div class="container">
+      <div class="spinner"></div>
+      <h3 style="color:var(--white);">Analyzing Your Website...</h3>
+      <p style="color:var(--gray-300);">Running AI-powered audit on your site. This takes a few seconds.</p>
+    </div>
+  </section>
+
+  <!-- Audit Results -->
+  <section class="section audit-results" id="audit-results">
+    <div class="container">
+      <div class="audit-meta">
+        <h2 id="result-title">Audit Results</h2>
+        <p id="result-meta"></p>
+      </div>
+      
+      <div style="text-align:center;">
+        <div class="score-circle" id="score-circle">
+          <div class="score-number" id="score-number">0</div>
+          <div class="score-grade" id="score-grade">Grade</div>
+        </div>
+      </div>
+
+      <div id="sections-container"></div>
+
+      <div class="priorities-box" id="priorities-box">
+        <h3>Top 3 Priorities</h3>
+        <div id="priorities-list"></div>
+      </div>
+
+      <div class="demo-note" id="demo-note"></div>
+
+      <div class="cta-after-audit">
+        <h3>Want a Deeper Analysis?</h3>
+        <p>Our team can provide a comprehensive deep-dive with an actionable implementation plan tailored to your business.</p>
+        <a href="contact.html" class="btn btn-primary">Schedule a Free Strategy Call &rarr;</a>
       </div>
     </div>
   </section>
@@ -74,15 +156,118 @@
         <div class="section-title">What Happens <span class="highlight">After</span> Your Audit?</div>
       </div>
       <div class="process-grid">
-        <div class="process-step"><div class="process-number">1</div><h4>We Analyze</h4><p style="color:var(--gray-300);">Our team performs a comprehensive analysis of your online presence within 24 hours.</p></div>
-        <div class="process-step"><div class="process-number">2</div><h4>We Present</h4><p style="color:var(--gray-300);">You'll receive a detailed audit report with specific findings and opportunities.</p></div>
+        <div class="process-step"><div class="process-number">1</div><h4>We Analyze</h4><p style="color:var(--gray-300);">Our AI performs a comprehensive analysis of your online presence in seconds.</p></div>
+        <div class="process-step"><div class="process-number">2</div><h4>You Review</h4><p style="color:var(--gray-300);">You get a detailed audit report with specific findings and scores.</p></div>
         <div class="process-step"><div class="process-number">3</div><h4>We Strategize</h4><p style="color:var(--gray-300);">We schedule a free strategy call to walk through the results and recommend next steps.</p></div>
-        <div class="process-step"><div class="process-number">4</div><h4>You Decide</h4><p style="color:var(--gray-300);">No pressure. Take the insights and implement them yourself, or let us handle everything for you.</p></div>
+        <div class="process-step"><div class="process-number">4</div><h4>You Decide</h4><p style="color:var(--gray-300);">No pressure. Take the insights and implement them yourself, or let us handle everything.</p></div>
       </div>
     </div>
   </section>
 
-  <footer class="footer"><div class="container"><div class="footer-grid"><div class="footer-brand"><a href="../index.html" class="nav-logo">AI<span>Growth</span>Labs</a><p>AI-powered local SEO and reputation management for USA businesses.</p></div><div><h4>Services</h4><div class="footer-links"><a href="local-seo.html">Local SEO</a><a href="gbp-optimization.html">GBP Optimization</a><a href="reputation-management.html">Reputation Management</a><a href="ai-seo.html">AI SEO</a><a href="paid-advertising.html">Paid Advertising</a><a href="social-media.html">Social Media</a></div></div><div><h4>Industries</h4><div class="footer-links"><a href="seo-for-dentists.html">SEO for Dentists</a><a href="seo-for-lawyers.html">SEO for Lawyers</a><a href="seo-for-restaurants.html">SEO for Restaurants</a><a href="seo-for-plumbers.html">SEO for Plumbers</a></div></div><div><h4>Company</h4><div class="footer-links"><a href="about.html">About Us</a><a href="contact.html">Contact</a><a href="blog.html">Blog</a><a href="privacy-policy.html">Privacy Policy</a><a href="terms.html">Terms</a><a href="disclaimer.html">Disclaimer</a></div></div></div><div class="footer-bottom"><p>&copy; 2026 AI Growth Labs. All rights reserved.</p></div></div></footer>
+  <footer class="footer"><div class="container"><div class="footer-grid"><div class="footer-brand"><a href="../index.html" class="nav-logo">AI<span>Growth</span>Labs</a><p>AI-powered local SEO and reputation management for businesses.</p></div><div><h4>Services</h4><div class="footer-links"><a href="local-seo.html">Local SEO</a><a href="gbp-optimization.html">GBP Optimization</a><a href="reputation-management.html">Reputation Management</a><a href="ai-seo.html">AI SEO</a><a href="paid-advertising.html">Paid Advertising</a><a href="social-media.html">Social Media</a></div></div><div><h4>Industries</h4><div class="footer-links"><a href="seo-for-dentists.html">SEO for Dentists</a><a href="seo-for-lawyers.html">SEO for Lawyers</a><a href="seo-for-restaurants.html">SEO for Restaurants</a><a href="seo-for-plumbers.html">SEO for Plumbers</a></div></div><div><h4>Company</h4><div class="footer-links"><a href="about.html">About Us</a><a href="contact.html">Contact</a><a href="blog.html">Blog</a><a href="privacy-policy.html">Privacy Policy</a><a href="terms.html">Terms</a><a href="disclaimer.html">Disclaimer</a></div></div></div><div class="footer-bottom"><p>&copy; 2026 AI Growth Labs. All rights reserved.</p></div></div></footer>
+
   <script src="../js/main.js"></script>
+  <script>
+    // Backend API URL — change this to your production domain
+    const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:8000'
+      : 'https://user:5dfe2494e43dd9ea3b068a0861a8499b@a3fce9995779-tunnel-obhlq5l5.devinapps.com';
+
+    async function runAudit(e) {
+      e.preventDefault();
+      const btn = document.getElementById('auditBtn');
+      const formSection = document.getElementById('audit-form-section');
+      const loading = document.getElementById('audit-loading');
+      const results = document.getElementById('audit-results');
+
+      // Collect form data
+      const data = {
+        business_name: document.getElementById('business_name').value,
+        contact_name: document.getElementById('contact_name').value,
+        email: document.getElementById('email').value,
+        phone: document.getElementById('phone').value,
+        website: document.getElementById('website').value,
+        industry: document.getElementById('industry').value,
+        city: document.getElementById('city').value
+      };
+
+      // Show loading
+      btn.disabled = true;
+      btn.textContent = 'Analyzing...';
+      loading.style.display = 'block';
+      results.classList.remove('show');
+
+      try {
+        const resp = await fetch(API_URL + '/api/public/free-audit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        if (!resp.ok) throw new Error('Audit failed');
+        const result = await resp.json();
+        const audit = result.audit;
+
+        // Hide loading, show results
+        loading.style.display = 'none';
+        results.classList.add('show');
+
+        // Score circle
+        const circle = document.getElementById('score-circle');
+        circle.className = 'score-circle grade-' + audit.grade.toLowerCase();
+        document.getElementById('score-number').textContent = audit.overall_score;
+        document.getElementById('score-grade').textContent = 'Grade ' + audit.grade;
+
+        // Title & meta
+        document.getElementById('result-title').textContent = 'Audit Results for ' + audit.business_name;
+        document.getElementById('result-meta').textContent = audit.website + ' | ' + audit.audit_date;
+
+        // Sections
+        const container = document.getElementById('sections-container');
+        container.innerHTML = '';
+        audit.sections.forEach(function(section) {
+          const scoreClass = section.score >= 75 ? 'score-good' : (section.score >= 55 ? 'score-warn' : 'score-bad');
+          let html = '<div class="audit-section">';
+          html += '<div class="audit-section-header">';
+          html += '<span class="audit-section-icon">' + section.icon + '</span>';
+          html += '<span class="audit-section-title">' + section.name + '</span>';
+          html += '<span class="audit-section-score ' + scoreClass + '">' + section.score + '/100</span>';
+          html += '</div>';
+          
+          html += '<ul class="findings-list">';
+          section.findings.forEach(function(f) { html += '<li>' + f + '</li>'; });
+          html += '</ul>';
+
+          html += '<div class="recs-title">Recommendations:</div>';
+          html += '<ul class="recs-list">';
+          section.recommendations.forEach(function(r) { html += '<li>' + r + '</li>'; });
+          html += '</ul>';
+          html += '</div>';
+          container.innerHTML += html;
+        });
+
+        // Priorities
+        const priList = document.getElementById('priorities-list');
+        priList.innerHTML = '';
+        audit.top_3_priorities.forEach(function(p) {
+          priList.innerHTML += '<div class="priority-item">' + p + '</div>';
+        });
+
+        // Demo note
+        document.getElementById('demo-note').textContent = audit.note;
+
+        // Scroll to results
+        results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      } catch (err) {
+        loading.style.display = 'none';
+        alert('Audit could not be completed. Please try again or contact us directly.');
+        console.error(err);
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Run Free Audit Now →';
+    }
+  </script>
 </body>
 </html>

@@ -67,7 +67,7 @@
         if (withoutZero.length >= 7 && withoutZero.length <= 12) {
           return { valid: true };
         }
-        return { valid: false, error: 'Please include your country code (e.g., +1 for USA, +92 for Pakistan, +44 for UK).' };
+        return { valid: false, error: 'Please include your country code (e.g., +971 for UAE, +1 for USA, +44 for UK).' };
       }
       // Could be US number without +1
       if (cleaned.length === 10) {
@@ -76,7 +76,7 @@
       if (cleaned.length === 11 && cleaned.charAt(0) === '1') {
         return { valid: true };
       }
-      return { valid: false, error: 'Please include your country code (e.g., +1 for USA, +92 for Pakistan, +44 for UK).' };
+      return { valid: false, error: 'Please include your country code (e.g., +971 for UAE, +1 for USA, +44 for UK).' };
     }
 
     // Has + prefix — match against known formats

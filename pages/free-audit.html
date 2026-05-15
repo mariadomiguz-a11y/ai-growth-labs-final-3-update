@@ -136,6 +136,7 @@
                   <option value="plumbing">Plumbing Company</option>
                   <option value="hvac">HVAC Company</option>
                   <option value="medical">Medical Practice</option>
+                  <option value="medspa">Med Spa</option>
                   <option value="realestate">Real Estate</option>
                   <option value="auto">Auto Repair</option>
                   <option value="construction">Construction</option>
@@ -143,7 +144,16 @@
                   <option value="other">Other</option>
                 </select>
               </div>
-              <div class="form-group"><label>City & State</label><input type="text" id="city" placeholder="e.g., London, UK"></div>
+              <div class="form-group"><label>City & State</label><input type="text" id="city" placeholder="e.g., New York, NY"></div>
+              <div class="form-group"><label>Main Goal</label>
+                <select id="main_goal">
+                  <option value="">Select your main goal</option>
+                  <option value="reviews">More Reviews</option>
+                  <option value="rankings">Higher Google Rankings</option>
+                  <option value="leads">More Leads</option>
+                  <option value="all">All of the Above</option>
+                </select>
+              </div>
               <button type="submit" class="btn btn-primary" id="auditBtn" style="width:100%;justify-content:center;">Run Free Audit Now &rarr;</button>
               <p style="text-align:center;font-size:0.8rem;color:var(--text-light);margin-top:12px;">No credit card required. Instant results. 100% free.</p>
             </form>

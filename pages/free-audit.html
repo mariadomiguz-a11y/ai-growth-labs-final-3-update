@@ -155,7 +155,7 @@
               <div class="form-group"><label>Business Name *</label><input type="text" id="business_name" placeholder="Your business name" required></div>
               <div class="form-group"><label>Full Name *</label><input type="text" id="contact_name" placeholder="Your full name" required></div>
               <div class="form-group"><label>Email *</label><input type="email" id="email" placeholder="your@email.com" required></div>
-              <div class="form-group"><label>Phone *</label><input type="tel" id="phone" placeholder="(555) 123-4567" required></div>
+              <div class="form-group"><label>Phone * <span style="font-size:0.75rem;color:var(--text-light);font-weight:400;">(include country code, e.g. +1, +92, +44)</span></label><input type="tel" id="phone" placeholder="+1 (555) 123-4567" required></div>
               <div class="form-group"><label>Website URL *</label><input type="url" id="website" placeholder="https://yourwebsite.com" required></div>
               <div class="form-group"><label>Business Type</label>
                 <select id="industry">
@@ -317,6 +317,7 @@
 </footer>
 
   <script src="../js/main.js"></script>
+  <script src="../js/form-validation.js"></script>
   <script>
     // Backend API URL — change this to your production domain
     const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
@@ -325,6 +326,16 @@
 
     async function runAudit(e) {
       e.preventDefault();
+
+      // Validate form (email, phone, rate limit)
+      var isValid = AGLFormValidation.validateForm({
+        formId: 'auditForm',
+        emailInput: document.getElementById('email'),
+        phoneInput: document.getElementById('phone'),
+        phoneRequired: true
+      });
+      if (!isValid) return;
+
       const btn = document.getElementById('auditBtn');
       const formSection = document.getElementById('audit-form-section');
       const loading = document.getElementById('audit-loading');
@@ -414,6 +425,9 @@
         alert('Audit could not be completed. Please try again or contact us directly.');
         console.error(err);
       }
+
+      // Record this submission for rate limiting
+      AGLFormValidation.recordSubmission('auditForm');
 
       btn.disabled = false;
       btn.textContent = 'Run Free Audit Now →';

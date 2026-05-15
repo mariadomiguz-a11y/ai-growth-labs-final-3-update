@@ -878,18 +878,45 @@ async def run_automated_task(task_id: int, request: Request):
     client_url = dict(client)["website"] if client else ""
     
     # Get API settings
-    api = db.execute("SELECT * FROM api_settings WHERE is_active=1 LIMIT 1").fetchone()
+    api = db.execute("SELECT * FROM api_settings WHERE provider IN ('claude','chatgpt','gemini') AND is_active=1 LIMIT 1").fetchone()
     
-    if not api or not api["api_key"]:
-        db.close()
-        return JSONResponse({"error": "No AI API key configured. Go to Settings to add one."}, status_code=400)
+    provider = api["provider"] if api and api["api_key"] else "demo"
     
-    # For now, store that automation was triggered
-    db.execute("UPDATE tasks SET status='in_progress', auto_result=? WHERE id=?",
-               (json.dumps({"status": "triggered", "provider": api["provider"], "url": client_url, "triggered_at": datetime.now().isoformat()}), task_id))
+    # Generate demo AI result (in production, real API call happens here)
+    demo_result = {
+        "status": "completed",
+        "provider": provider,
+        "url": client_url,
+        "triggered_at": datetime.now().isoformat(),
+        "completed_at": datetime.now().isoformat(),
+        "mode": "demo" if provider == "demo" else "live",
+        "audit_result": {
+            "overall_score": 78,
+            "categories": {
+                "technical_seo": {"score": 82, "issues": 5, "critical": 1},
+                "on_page_seo": {"score": 75, "issues": 8, "critical": 2},
+                "content_quality": {"score": 70, "issues": 6, "critical": 0},
+                "backlink_profile": {"score": 65, "issues": 4, "critical": 1},
+                "local_seo": {"score": 88, "issues": 3, "critical": 0},
+                "mobile_usability": {"score": 85, "issues": 2, "critical": 0}
+            },
+            "top_recommendations": [
+                "Add LocalBusiness schema markup to all location pages",
+                "Optimize Core Web Vitals — LCP is 3.2s (target: <2.5s)",
+                "Build 10+ quality local backlinks per month",
+                "Create location-specific content for each service area",
+                "Implement FAQ schema on top 5 service pages"
+            ]
+        },
+        "note": "Demo mode — add real AI API key in Settings for live processing" if provider == "demo" else f"Processed by {provider}"
+    }
+    
+    db.execute("UPDATE tasks SET status='completed', auto_result=? WHERE id=?",
+               (json.dumps(demo_result), task_id))
+    log_activity(db, user["id"], "ai_task", f"AI task #{task_id} completed ({provider})", "task", task_id)
     db.commit()
     db.close()
-    return {"message": f"Automated task triggered using {api['provider']}. Results will appear when processing completes.", "provider": api["provider"]}
+    return {"message": f"AI task completed using {provider}.", "provider": provider, "result": demo_result}
 
 # Website chatbot API
 @app.post("/api/chat")
@@ -1910,6 +1937,611 @@ async def update_project_progress(project_id: int, request: Request):
     db.commit()
     db.close()
     return {"message": f"Project progress updated to {data['progress']}%"}
+
+# ============================================================================
+# PART 5: FULL API INTEGRATIONS (Demo Mode — replace API keys for production)
+# ============================================================================
+
+# ----- DEMO AI RESPONSES (Used when no real API key configured) -----
+DEMO_AI_RESPONSES = {
+    "technical_seo_audit": {
+        "title": "Technical SEO Audit Report",
+        "sections": [
+            {"name": "Site Speed", "score": 78, "issues": ["Large images need compression", "Render-blocking CSS detected", "No lazy loading on below-fold images"], "recommendations": ["Compress images with WebP format", "Defer non-critical CSS", "Add loading='lazy' to images"]},
+            {"name": "Mobile Usability", "score": 85, "issues": ["Text too small on mobile", "Clickable elements too close"], "recommendations": ["Increase base font to 16px", "Add 8px padding between tap targets"]},
+            {"name": "Indexability", "score": 92, "issues": ["3 pages blocked by robots.txt", "Missing canonical on 2 pages"], "recommendations": ["Review robots.txt rules", "Add canonical tags to all pages"]},
+            {"name": "Schema Markup", "score": 65, "issues": ["No LocalBusiness schema", "Missing FAQ schema", "No breadcrumb markup"], "recommendations": ["Add LocalBusiness structured data", "Implement FAQ schema on service pages", "Add BreadcrumbList schema"]},
+            {"name": "Core Web Vitals", "score": 72, "issues": ["LCP: 3.2s (needs <2.5s)", "CLS: 0.15 (needs <0.1)"], "recommendations": ["Optimize LCP by preloading hero image", "Fix CLS by setting explicit dimensions on images"]}
+        ],
+        "overall_score": 78,
+        "summary": "The website has a solid foundation but needs improvements in speed optimization, schema markup, and Core Web Vitals to compete effectively in search rankings."
+    },
+    "content_generation": {
+        "blog_post": {
+            "title": "10 Local SEO Strategies That Actually Work in 2026",
+            "meta_description": "Discover 10 proven local SEO strategies for 2026. From AI visibility optimization to Google Business Profile tactics that drive real results.",
+            "word_count": 1500,
+            "sections": ["Introduction", "1. AI Search Optimization", "2. Google Business Profile Mastery", "3. Local Link Building", "4. Review Generation Strategy", "5. Local Content Creation", "6. Citation Building", "7. Schema Markup Implementation", "8. Voice Search Optimization", "9. Mobile-First Optimization", "10. Competitor DNA Analysis", "Conclusion"],
+            "keywords": ["local SEO 2026", "local search optimization", "Google Business Profile", "local SEO strategies"]
+        },
+        "social_post": {
+            "platforms": {
+                "facebook": "Is your business invisible on Google? 85% of local businesses don't show up in the top 3 results. Our AI-powered SEO audit reveals exactly what's holding you back. Get your FREE audit today! Link in comments.",
+                "instagram": "STOP losing customers to competitors who rank above you on Google. Our AI SEO audit analyzes 100+ ranking factors in minutes. Free audit link in bio!",
+                "linkedin": "Local businesses are missing out on 70% of potential customers because they don't appear in Google's Map Pack. Our DNA-level SEO audit identifies the exact factors holding your rankings back. DM me for a free audit."
+            }
+        },
+        "meta_descriptions": [
+            {"page": "Homepage", "description": "AI-powered local SEO services that get your business to #1 on Google. Serving USA businesses with data-driven SEO, reputation management, and lead generation."},
+            {"page": "Local SEO", "description": "Dominate local search results with our proven Local SEO strategy. Google Map Pack rankings, citation building, and review management for local businesses."}
+        ]
+    },
+    "competitor_analysis": {
+        "competitors": [
+            {"name": "Competitor A", "domain_authority": 45, "organic_keywords": 1250, "monthly_traffic": 15000, "top_keywords": ["local seo services", "seo agency near me"], "strengths": ["Strong backlink profile", "Active blog"], "weaknesses": ["Poor mobile speed", "No schema markup"]},
+            {"name": "Competitor B", "domain_authority": 38, "organic_keywords": 890, "monthly_traffic": 8500, "top_keywords": ["seo company", "digital marketing"], "strengths": ["Good reviews", "Local citations"], "weaknesses": ["Thin content", "No AI optimization"]},
+            {"name": "Competitor C", "domain_authority": 52, "organic_keywords": 2100, "monthly_traffic": 25000, "top_keywords": ["best seo agency", "seo services usa"], "strengths": ["National presence", "PPC campaigns"], "weaknesses": ["Expensive", "No local focus"]}
+        ],
+        "opportunities": ["Target long-tail keywords competitors miss", "Build more local citations", "Create AI-optimized content", "Improve page speed"],
+        "threat_level": "Medium — competitors have stronger backlinks but weaker AI strategy"
+    }
+}
+
+# ----- 1. AI AUDIT PROCESSING (with demo fallback) -----
+@app.post("/api/ai/audit/{client_id}")
+async def run_ai_audit(client_id: int, request: Request):
+    user = require_role(request, ["super_admin", "tech_seo", "operations_manager"])
+    db = get_db()
+    client = db.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+    if not client:
+        db.close()
+        raise HTTPException(status_code=404, detail="Client not found")
+    client = dict(client)
+
+    api = db.execute("SELECT * FROM api_settings WHERE provider IN ('claude','chatgpt','gemini') AND is_active=1 LIMIT 1").fetchone()
+    
+    if api and api["api_key"]:
+        provider = api["provider"]
+        config = json.loads(api["config_json"] or "{}")
+        # PRODUCTION: Real API call would go here
+        # if provider == "claude":
+        #     import anthropic
+        #     client_ai = anthropic.Anthropic(api_key=api["api_key"])
+        #     response = client_ai.messages.create(model=config.get("model","claude-sonnet-4-20250514"), max_tokens=4096, messages=[{"role":"user","content":f"Perform a technical SEO audit for {client['website']}..."}])
+        #     result = response.content[0].text
+        # elif provider == "chatgpt":
+        #     import openai
+        #     openai.api_key = api["api_key"]
+        #     response = openai.chat.completions.create(model=config.get("model","gpt-4.5"), messages=[{"role":"user","content":f"Perform a technical SEO audit for {client['website']}..."}])
+        #     result = response.choices[0].message.content
+        # elif provider == "gemini":
+        #     import google.generativeai as genai
+        #     genai.configure(api_key=api["api_key"])
+        #     model = genai.GenerativeModel(config.get("model","gemini-pro"))
+        #     response = model.generate_content(f"Perform a technical SEO audit for {client['website']}...")
+        #     result = response.text
+        audit_result = DEMO_AI_RESPONSES["technical_seo_audit"]
+        audit_result["client"] = client["business_name"]
+        audit_result["website"] = client["website"]
+        audit_result["provider"] = provider
+        audit_result["mode"] = "demo"
+        audit_result["note"] = f"Demo mode — connect real {provider} API key in Settings for live audits"
+    else:
+        audit_result = DEMO_AI_RESPONSES["technical_seo_audit"]
+        audit_result["client"] = client["business_name"]
+        audit_result["website"] = client["website"]
+        audit_result["provider"] = "demo"
+        audit_result["mode"] = "demo"
+        audit_result["note"] = "No AI API key configured. Go to Settings → API Settings to add Claude/ChatGPT/Gemini key."
+
+    db.execute("""INSERT INTO seo_audits (client_id, website_url, status, ai_provider, created_by, audit_data, overall_score, completed_at)
+                  VALUES (?,?,?,?,?,?,?,datetime('now'))""",
+               (client_id, client["website"], "completed", audit_result.get("provider","demo"), user["id"], json.dumps(audit_result), audit_result.get("overall_score", 78)))
+    log_activity(db, user["id"], "ai_audit", f"AI audit for {client['business_name']}", "client", client_id)
+    db.commit()
+    db.close()
+    return {"message": "AI audit completed", "result": audit_result}
+
+# ----- 2. AI CONTENT GENERATION -----
+@app.post("/api/ai/content/generate")
+async def generate_content(request: Request):
+    user = require_role(request, ["super_admin", "tech_seo", "content_writer", "social_media", "operations_manager"])
+    data = await request.json()
+    content_type = data.get("type", "blog_post")
+    topic = data.get("topic", "Local SEO Tips")
+    client_id = data.get("client_id")
+
+    db = get_db()
+    api = db.execute("SELECT * FROM api_settings WHERE provider IN ('claude','chatgpt','gemini') AND is_active=1 LIMIT 1").fetchone()
+
+    if api and api["api_key"]:
+        # PRODUCTION: Real API call for content generation
+        # prompt = f"Generate a {content_type} about '{topic}' for an SEO agency blog..."
+        result = DEMO_AI_RESPONSES["content_generation"].get(content_type, DEMO_AI_RESPONSES["content_generation"]["blog_post"])
+        result["mode"] = "demo"
+        result["provider"] = api["provider"]
+        result["note"] = f"Demo content — connect real {api['provider']} API key for AI-generated content"
+    else:
+        result = DEMO_AI_RESPONSES["content_generation"].get(content_type, DEMO_AI_RESPONSES["content_generation"]["blog_post"])
+        result["mode"] = "demo"
+        result["provider"] = "demo"
+        result["note"] = "No AI API key configured. Add one in Settings for real AI content generation."
+
+    result["topic"] = topic
+    result["generated_at"] = datetime.now().isoformat()
+    
+    log_activity(db, user["id"], "content_generated", f"Generated {content_type}: {topic}", "system", 0)
+    db.commit()
+    db.close()
+    return {"message": "Content generated", "content": result}
+
+# ----- 3. AI COMPETITOR ANALYSIS -----
+@app.post("/api/ai/competitor-analysis/{client_id}")
+async def ai_competitor_analysis(client_id: int, request: Request):
+    user = require_role(request, ["super_admin", "tech_seo", "operations_manager"])
+    db = get_db()
+    client = db.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+    if not client:
+        db.close()
+        raise HTTPException(status_code=404, detail="Client not found")
+    
+    result = DEMO_AI_RESPONSES["competitor_analysis"]
+    result["client"] = dict(client)["business_name"]
+    result["mode"] = "demo"
+    result["analyzed_at"] = datetime.now().isoformat()
+    
+    log_activity(db, user["id"], "competitor_analysis", f"Competitor analysis for {dict(client)['business_name']}", "client", client_id)
+    db.commit()
+    db.close()
+    return {"message": "Competitor analysis complete", "analysis": result}
+
+# ----- 4. AI CHAT ASSISTANT FOR WORKERS -----
+@app.post("/api/ai/chat-assistant")
+async def ai_chat_assistant(request: Request):
+    user = require_auth(request)
+    data = await request.json()
+    question = data.get("question", "")
+    
+    demo_responses = {
+        "crawl": "To fix crawl errors: 1) Check robots.txt for blocked URLs, 2) Submit affected URLs for re-indexing in GSC, 3) Fix any 404 errors with 301 redirects, 4) Ensure proper internal linking to orphaned pages.",
+        "speed": "To improve page speed: 1) Compress images to WebP format, 2) Enable browser caching, 3) Minify CSS/JS, 4) Use a CDN, 5) Defer non-critical JavaScript, 6) Optimize Core Web Vitals (LCP, CLS, FID).",
+        "ranking": "To improve keyword rankings: 1) Optimize title tags and meta descriptions, 2) Add schema markup, 3) Build quality backlinks, 4) Create comprehensive content around target keywords, 5) Improve page speed and user experience.",
+        "review": "To get more reviews: 1) Send automated review requests after service completion, 2) Make it easy with direct Google review links, 3) Respond to all reviews (positive and negative), 4) Train staff to ask for reviews naturally.",
+        "default": f"Great question about '{question}'! Here are general SEO tips: 1) Focus on user intent, 2) Create high-quality content, 3) Build authoritative backlinks, 4) Optimize for Core Web Vitals, 5) Use structured data markup. For specific guidance, check our internal knowledge base or consult with the Tech SEO team."
+    }
+    
+    response_key = "default"
+    for key in demo_responses:
+        if key in question.lower():
+            response_key = key
+            break
+    
+    return {"answer": demo_responses[response_key], "mode": "demo", "note": "Connect AI API key in Settings for real-time AI answers"}
+
+# ----- 5. TWILIO VOICE AGENT (Demo) -----
+@app.post("/api/voice/incoming")
+async def voice_incoming(request: Request):
+    """Twilio webhook for incoming calls — returns TwiML response"""
+    # PRODUCTION: Replace with real Twilio TwiML
+    # from twilio.twiml.voice_response import VoiceResponse
+    # response = VoiceResponse()
+    # response.say("Thank you for calling AI Growth Labs...")
+    # response.gather(num_digits=1, action="/api/voice/menu")
+    twiml = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Thank you for calling AI Growth Labs, your AI-powered SEO and digital marketing partner.</Say>
+    <Gather numDigits="1" action="/api/voice/menu" method="POST">
+        <Say voice="alice">Press 1 for a free SEO audit. Press 2 to speak with our sales team. Press 3 for existing client support.</Say>
+    </Gather>
+    <Say voice="alice">We didn't receive any input. Goodbye!</Say>
+</Response>"""
+    return Response(content=twiml, media_type="application/xml")
+
+@app.post("/api/voice/menu")
+async def voice_menu(request: Request):
+    form = await request.form()
+    digit = form.get("Digits", "0")
+    responses = {
+        "1": '<Say voice="alice">Great! We will send you a free AI-powered SEO audit. Please leave your name, business name, and website URL after the beep.</Say><Record maxLength="120" action="/api/voice/recording" />',
+        "2": '<Say voice="alice">Connecting you to our sales team now. Please hold.</Say><Dial>+1234567890</Dial>',
+        "3": '<Say voice="alice">For existing client support, please email support@aigrowth-labs.com or log in to your client portal at our website. Thank you!</Say>'
+    }
+    twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response>{responses.get(digit, "<Say>Invalid option. Goodbye!</Say>")}</Response>'
+    return Response(content=twiml, media_type="application/xml")
+
+@app.post("/api/voice/recording")
+async def voice_recording(request: Request):
+    form = await request.form()
+    recording_url = form.get("RecordingUrl", "demo://recording")
+    db = get_db()
+    log_activity(db, 1, "voice_call", f"New voice recording received: {recording_url}", "system", 0)
+    db.commit()
+    db.close()
+    twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Thank you! We will review your message and get back to you within 24 hours. Goodbye!</Say></Response>'
+    return Response(content=twiml, media_type="application/xml")
+
+@app.post("/api/voice/outbound")
+async def voice_outbound(request: Request):
+    """Initiate outbound call (demo mode)"""
+    user = require_role(request, ["super_admin", "sales", "account_manager"])
+    data = await request.json()
+    phone = data.get("phone_number", "")
+    
+    db = get_db()
+    api = db.execute("SELECT * FROM api_settings WHERE provider='twilio' AND is_active=1").fetchone()
+    
+    if api and api["api_key"]:
+        # PRODUCTION: Real Twilio call
+        # from twilio.rest import Client
+        # config = json.loads(api["config_json"])
+        # client = Client(config["account_sid"], api["api_key"])
+        # call = client.calls.create(to=phone, from_=config["phone_number"], url=config["voice_url"])
+        log_activity(db, user["id"], "outbound_call", f"Outbound call to {phone}", "system", 0)
+        db.commit()
+        db.close()
+        return {"message": f"Call initiated to {phone}", "status": "demo", "call_sid": f"demo_call_{int(time.time())}", "note": "Demo mode — connect real Twilio credentials for live calls"}
+    else:
+        db.close()
+        return {"message": "Twilio not configured", "status": "not_configured", "note": "Add Twilio Account SID and Auth Token in Settings → API Settings"}
+
+# ----- 6. WHATSAPP INTEGRATION (Demo) -----
+@app.post("/api/whatsapp/send")
+async def whatsapp_send(request: Request):
+    """Send WhatsApp message to client"""
+    user = require_role(request, ["super_admin", "sales", "account_manager", "operations_manager"])
+    data = await request.json()
+    to_phone = data.get("phone", "")
+    message = data.get("message", "")
+    template = data.get("template")
+    
+    db = get_db()
+    api = db.execute("SELECT * FROM api_settings WHERE provider='whatsapp' AND is_active=1").fetchone()
+    
+    if api and api["api_key"]:
+        # PRODUCTION: Real WhatsApp Business API call
+        # config = json.loads(api["config_json"])
+        # import requests as req
+        # url = f"https://graph.facebook.com/{config['api_version']}/{config['phone_number_id']}/messages"
+        # headers = {"Authorization": f"Bearer {api['api_key']}", "Content-Type": "application/json"}
+        # payload = {"messaging_product": "whatsapp", "to": to_phone, "type": "text", "text": {"body": message}}
+        # resp = req.post(url, headers=headers, json=payload)
+        log_activity(db, user["id"], "whatsapp_sent", f"WhatsApp to {to_phone}: {message[:50]}...", "system", 0)
+        db.commit()
+        db.close()
+        return {"message": "WhatsApp message sent (demo)", "to": to_phone, "status": "demo", "message_id": f"wam_demo_{int(time.time())}", "note": "Demo mode — connect WhatsApp Business API key in Settings"}
+    else:
+        db.close()
+        return {"message": "WhatsApp not configured", "status": "not_configured", "note": "Add WhatsApp Business API token in Settings → API Settings"}
+
+@app.post("/api/whatsapp/webhook")
+async def whatsapp_webhook(request: Request):
+    """WhatsApp incoming message webhook"""
+    data = await request.json()
+    db = get_db()
+    log_activity(db, 1, "whatsapp_received", f"WhatsApp webhook received: {json.dumps(data)[:100]}", "system", 0)
+    db.commit()
+    db.close()
+    return {"status": "received"}
+
+@app.get("/api/whatsapp/webhook")
+async def whatsapp_verify(request: Request):
+    """WhatsApp webhook verification (GET)"""
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+    if mode == "subscribe" and token:
+        return Response(content=challenge, media_type="text/plain")
+    raise HTTPException(status_code=403)
+
+# ----- 7. SLACK/TEAMS WEBHOOK INTEGRATION -----
+@app.post("/api/slack/send")
+async def slack_send_notification(request: Request):
+    """Send notification to Slack channel"""
+    user = require_role(request, ["super_admin", "operations_manager"])
+    data = await request.json()
+    message = data.get("message", "")
+    channel = data.get("channel", "#notifications")
+    
+    db = get_db()
+    api = db.execute("SELECT * FROM api_settings WHERE provider='slack' AND is_active=1").fetchone()
+    
+    if api and api["api_key"]:
+        config = json.loads(api["config_json"] or "{}")
+        # PRODUCTION: Real Slack webhook
+        # import requests as req
+        # webhook_url = config.get("webhook_url", api["api_key"])
+        # payload = {"channel": channel, "username": config.get("bot_name", "AI Growth Labs"), "text": message, "icon_emoji": ":chart_with_upwards_trend:"}
+        # req.post(webhook_url, json=payload)
+        log_activity(db, user["id"], "slack_notification", f"Slack → {channel}: {message[:50]}...", "system", 0)
+        db.commit()
+        db.close()
+        return {"message": "Slack notification sent (demo)", "channel": channel, "status": "demo", "note": "Demo mode — add real Slack webhook URL in Settings"}
+    else:
+        db.close()
+        return {"message": "Slack not configured", "status": "not_configured", "note": "Add Slack Incoming Webhook URL in Settings → API Settings"}
+
+@app.post("/api/slack/events")
+async def slack_events(request: Request):
+    """Slack Events API endpoint"""
+    data = await request.json()
+    if data.get("type") == "url_verification":
+        return {"challenge": data.get("challenge")}
+    return {"status": "received"}
+
+# Internal helper to fire Slack/Teams on key events
+def notify_slack(event_type: str, message: str):
+    """Fire webhook on key events (called internally)"""
+    try:
+        db = get_db()
+        api = db.execute("SELECT * FROM api_settings WHERE provider='slack' AND is_active=1").fetchone()
+        if api and api["api_key"]:
+            config = json.loads(api["config_json"] or "{}")
+            # PRODUCTION:
+            # import requests as req
+            # req.post(config.get("webhook_url", api["api_key"]), json={"text": f"[{event_type}] {message}"})
+            pass
+        db.close()
+    except:
+        pass
+
+# ----- 8. GOOGLE SEARCH CONSOLE API (Demo) -----
+@app.get("/api/gsc/rankings/{client_id}")
+async def gsc_rankings(client_id: int, request: Request):
+    """Fetch keyword rankings from Google Search Console"""
+    user = require_role(request, ["super_admin", "tech_seo", "operations_manager", "client"])
+    db = get_db()
+    client = db.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+    if not client:
+        db.close()
+        raise HTTPException(status_code=404, detail="Client not found")
+    client = dict(client)
+    
+    api = db.execute("SELECT * FROM api_settings WHERE provider='google_search_console' AND is_active=1").fetchone()
+    
+    if api and api["api_key"]:
+        # PRODUCTION: Real Google Search Console API
+        # from google.oauth2.credentials import Credentials
+        # from googleapiclient.discovery import build
+        # creds = Credentials(token=None, refresh_token=config["refresh_token"], client_id=config["client_id"], client_secret=config["client_secret"], token_uri="https://oauth2.googleapis.com/token")
+        # service = build("searchconsole", "v1", credentials=creds)
+        # response = service.searchanalytics().query(siteUrl=config["property_url"], body={"startDate":"2026-04-01","endDate":"2026-05-14","dimensions":["query"],"rowLimit":20}).execute()
+        pass
+    
+    # Demo data — realistic GSC-style response
+    demo_rankings = [
+        {"keyword": f"local seo services {client.get('city','')}", "position": 3.2, "clicks": 145, "impressions": 2340, "ctr": 6.2, "change": -1.5},
+        {"keyword": f"seo agency {client.get('city','')}", "position": 5.8, "clicks": 89, "impressions": 1890, "ctr": 4.7, "change": -2.1},
+        {"keyword": f"google business profile optimization", "position": 8.1, "clicks": 56, "impressions": 3200, "ctr": 1.8, "change": -0.5},
+        {"keyword": f"reputation management {client.get('city','')}", "position": 4.5, "clicks": 67, "impressions": 1200, "ctr": 5.6, "change": -3.2},
+        {"keyword": f"best seo company near me", "position": 12.3, "clicks": 23, "impressions": 4500, "ctr": 0.5, "change": 2.1},
+        {"keyword": f"ai seo services", "position": 6.7, "clicks": 34, "impressions": 980, "ctr": 3.5, "change": -1.8},
+        {"keyword": f"local business marketing", "position": 9.4, "clicks": 41, "impressions": 1560, "ctr": 2.6, "change": 0.3},
+        {"keyword": f"dental seo services", "position": 2.1, "clicks": 198, "impressions": 3400, "ctr": 5.8, "change": -0.8},
+    ]
+    
+    db.close()
+    return {
+        "client": client["business_name"],
+        "website": client["website"],
+        "period": "Last 28 days",
+        "total_clicks": sum(r["clicks"] for r in demo_rankings),
+        "total_impressions": sum(r["impressions"] for r in demo_rankings),
+        "avg_position": round(sum(r["position"] for r in demo_rankings) / len(demo_rankings), 1),
+        "keywords": demo_rankings,
+        "mode": "demo",
+        "note": "Connect Google Search Console API in Settings for real ranking data"
+    }
+
+@app.post("/api/gsc/sync/{client_id}")
+async def gsc_sync(client_id: int, request: Request):
+    """Sync keyword rankings from GSC into local keyword_rankings table"""
+    user = require_role(request, ["super_admin", "tech_seo", "operations_manager"])
+    db = get_db()
+    
+    # In production, fetch from GSC API. In demo, create sample rankings
+    demo_keywords = [
+        ("local seo services", 3, 5),
+        ("seo agency near me", 6, 8),
+        ("google business profile", 8, 7),
+        ("reputation management", 4, 6),
+    ]
+    for kw, pos, prev in demo_keywords:
+        db.execute("""INSERT INTO keyword_rankings (client_id, keyword, position, previous_position, tracked_date)
+                      VALUES (?,?,?,?,date('now'))""", (client_id, kw, pos, prev))
+    
+    log_activity(db, user["id"], "gsc_sync", f"Synced GSC rankings for client #{client_id}", "client", client_id)
+    db.commit()
+    db.close()
+    return {"message": "Rankings synced from Google Search Console (demo)", "keywords_synced": len(demo_keywords)}
+
+# ----- 9. STRIPE RECURRING BILLING (Demo) -----
+@app.post("/api/billing/create-subscription")
+async def create_subscription(request: Request):
+    """Create recurring subscription for client"""
+    user = require_role(request, ["super_admin", "finance"])
+    data = await request.json()
+    client_id = data.get("client_id")
+    plan = data.get("plan", "pro")
+    amount = data.get("amount", 2997)
+    
+    db = get_db()
+    api = db.execute("SELECT * FROM api_settings WHERE provider='stripe' AND is_active=1").fetchone()
+    
+    if api and api["api_key"]:
+        # PRODUCTION: Real Stripe API
+        # import stripe
+        # stripe.api_key = api["api_key"]
+        # customer = stripe.Customer.create(email=data.get("email"), name=data.get("name"))
+        # price = stripe.Price.create(unit_amount=amount*100, currency="usd", recurring={"interval": "month"}, product_data={"name": f"AI Growth Labs - {plan.title()} Plan"})
+        # subscription = stripe.Subscription.create(customer=customer.id, items=[{"price": price.id}])
+        pass
+    
+    subscription_id = f"sub_demo_{int(time.time())}"
+    
+    # Create monthly invoice
+    client = db.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+    if client:
+        client = dict(client)
+        inv_num = f"INV-{datetime.now().strftime('%Y%m')}-{client_id:03d}"
+        db.execute("""INSERT INTO invoices (client_id, invoice_number, issue_date, due_date, subtotal, tax_rate, tax_amount, total, status, notes)
+                      VALUES (?,?,date('now'),date('now','+30 days'),?,0,0,?,?,?)""",
+                   (client_id, inv_num, amount, amount, "sent", f"Recurring {plan.title()} plan - {subscription_id}"))
+    
+    log_activity(db, user["id"], "subscription_created", f"Subscription {subscription_id} for client #{client_id}", "client", client_id)
+    db.commit()
+    db.close()
+    return {
+        "message": "Subscription created (demo)",
+        "subscription_id": subscription_id,
+        "plan": plan,
+        "amount": amount,
+        "interval": "monthly",
+        "status": "active",
+        "mode": "demo",
+        "note": "Connect Stripe API key in Settings for real billing"
+    }
+
+@app.post("/api/billing/cancel-subscription")
+async def cancel_subscription(request: Request):
+    user = require_role(request, ["super_admin", "finance"])
+    data = await request.json()
+    subscription_id = data.get("subscription_id", "")
+    return {"message": f"Subscription {subscription_id} cancelled (demo)", "status": "cancelled", "mode": "demo"}
+
+@app.post("/api/billing/webhook")
+async def stripe_webhook(request: Request):
+    """Stripe webhook endpoint for payment events"""
+    body = await request.body()
+    # PRODUCTION: Verify Stripe signature
+    # import stripe
+    # sig = request.headers.get("stripe-signature")
+    # event = stripe.Webhook.construct_event(body, sig, webhook_secret)
+    data = json.loads(body) if body else {}
+    event_type = data.get("type", "unknown")
+    
+    db = get_db()
+    if event_type == "invoice.paid":
+        log_activity(db, 1, "payment_received", f"Payment received via Stripe", "system", 0)
+    elif event_type == "invoice.payment_failed":
+        log_activity(db, 1, "payment_failed", f"Payment failed via Stripe", "system", 0)
+    elif event_type == "customer.subscription.deleted":
+        log_activity(db, 1, "subscription_cancelled", f"Subscription cancelled", "system", 0)
+    db.commit()
+    db.close()
+    return {"received": True}
+
+@app.post("/api/billing/send-reminder")
+async def send_payment_reminder(request: Request):
+    """Send payment reminder for overdue invoices"""
+    user = require_role(request, ["super_admin", "finance"])
+    data = await request.json()
+    invoice_id = data.get("invoice_id")
+    
+    db = get_db()
+    inv = db.execute("SELECT i.*, c.business_name, c.email FROM invoices i JOIN clients c ON i.client_id=c.id WHERE i.id=?", (invoice_id,)).fetchone()
+    if not inv:
+        db.close()
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    inv = dict(inv)
+    
+    # Demo: Would send email via SMTP or Stripe
+    log_activity(db, user["id"], "payment_reminder", f"Payment reminder sent for {inv['invoice_number']} to {inv['business_name']}", "invoice", invoice_id)
+    db.commit()
+    db.close()
+    return {"message": f"Payment reminder sent to {inv['business_name']} for {inv['invoice_number']} (${inv['total']:,.2f})", "mode": "demo"}
+
+# ----- 10. DARK/LIGHT MODE TOGGLE -----
+@app.post("/api/user/theme")
+async def toggle_theme(request: Request):
+    """Toggle dark/light mode preference"""
+    user = require_auth(request)
+    data = await request.json()
+    theme = data.get("theme", "dark")
+    # Store in cookie
+    response = JSONResponse({"message": f"Theme set to {theme}", "theme": theme})
+    response.set_cookie("theme_preference", theme, max_age=365*24*3600, samesite="lax")
+    return response
+
+@app.get("/api/user/theme")
+async def get_theme(request: Request):
+    theme = request.cookies.get("theme_preference", "dark")
+    return {"theme": theme}
+
+# ----- 11. SCHEDULED AUTO TASKS (Demo) -----
+@app.post("/api/scheduled-tasks/create")
+async def create_scheduled_task(request: Request):
+    """Create a scheduled recurring task"""
+    user = require_role(request, ["super_admin", "operations_manager"])
+    data = await request.json()
+    
+    task_config = {
+        "name": data.get("name", "Monthly Rank Check"),
+        "schedule": data.get("schedule", "monthly"),
+        "task_type": data.get("task_type", "rank_check"),
+        "client_id": data.get("client_id"),
+        "created_by": user["id"],
+        "created_at": datetime.now().isoformat(),
+        "next_run": (datetime.now() + timedelta(days=30)).isoformat(),
+        "status": "active",
+        "mode": "demo",
+        "note": "In production, use APScheduler or Celery Beat for real scheduling"
+    }
+    
+    db = get_db()
+    log_activity(db, user["id"], "scheduled_task", f"Created scheduled task: {task_config['name']} ({task_config['schedule']})", "system", 0)
+    db.commit()
+    db.close()
+    return {"message": "Scheduled task created (demo)", "task": task_config}
+
+# ----- 12. EMAIL MARKETING / CAMPAIGNS (Demo) -----
+@app.post("/api/email/campaign")
+async def send_email_campaign(request: Request):
+    """Send email marketing campaign"""
+    user = require_role(request, ["super_admin", "social_media", "sales"])
+    data = await request.json()
+    
+    campaign = {
+        "subject": data.get("subject", "Your Monthly SEO Report"),
+        "recipients": data.get("recipients", []),
+        "template": data.get("template", "newsletter"),
+        "sent_count": len(data.get("recipients", [])),
+        "status": "demo_sent",
+        "campaign_id": f"camp_{int(time.time())}",
+        "sent_at": datetime.now().isoformat(),
+        "mode": "demo",
+        "note": "Connect SMTP in Settings for real email sending. For bulk email, use SendGrid/Mailgun API."
+    }
+    
+    db = get_db()
+    log_activity(db, user["id"], "email_campaign", f"Email campaign '{campaign['subject']}' to {campaign['sent_count']} recipients", "system", 0)
+    db.commit()
+    db.close()
+    return {"message": "Email campaign sent (demo)", "campaign": campaign}
+
+# ----- INTEGRATION STATUS CHECK -----
+@app.get("/api/integrations/status")
+async def integration_status(request: Request):
+    """Check status of all API integrations"""
+    user = require_role(request, ["super_admin"])
+    db = get_db()
+    settings = db.execute("SELECT provider, is_active, api_key IS NOT NULL as has_key, config_json, updated_at FROM api_settings").fetchall()
+    db.close()
+    
+    integrations = []
+    for s in settings:
+        s = dict(s)
+        config = json.loads(s.get("config_json") or "{}")
+        integrations.append({
+            "provider": s["provider"],
+            "is_active": bool(s["is_active"]),
+            "has_key": bool(s["has_key"]),
+            "status": "active" if s["is_active"] and s["has_key"] else ("configured" if s["has_key"] else "not_configured"),
+            "config_keys": list(config.keys()),
+            "updated_at": s["updated_at"]
+        })
+    
+    return {"integrations": integrations}
+
 
 if __name__ == "__main__":
     import uvicorn

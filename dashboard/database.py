@@ -242,7 +242,7 @@ def init_db():
     # API Settings (NEW)
     c.execute('''CREATE TABLE IF NOT EXISTS api_settings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        provider TEXT UNIQUE NOT NULL CHECK(provider IN ('claude','chatgpt','gemini','twilio','smtp')),
+        provider TEXT UNIQUE NOT NULL CHECK(provider IN ('claude','chatgpt','gemini','twilio','smtp','stripe','whatsapp','slack','google_search_console')),
         api_key TEXT,
         is_active INTEGER DEFAULT 0,
         config_json TEXT,
@@ -706,6 +706,11 @@ def _insert_demo_data(c):
             ('chatgpt', None, 0, json.dumps({"model": "gpt-4.5", "max_tokens": 4096})),
             ('gemini', None, 0, json.dumps({"model": "gemini-pro", "max_tokens": 4096})),
             ('smtp', None, 0, json.dumps({"host": "smtp.gmail.com", "port": 587, "from_email": ""})),
+            ('twilio', None, 0, json.dumps({"account_sid": "", "auth_token": "", "phone_number": "", "voice_url": "/api/voice/incoming"})),
+            ('stripe', None, 0, json.dumps({"publishable_key": "", "webhook_secret": "", "currency": "usd"})),
+            ('whatsapp', None, 0, json.dumps({"phone_number_id": "", "business_account_id": "", "api_version": "v17.0"})),
+            ('slack', None, 0, json.dumps({"webhook_url": "", "channel": "#notifications", "bot_name": "AI Growth Labs"})),
+            ('google_search_console', None, 0, json.dumps({"client_id": "", "client_secret": "", "refresh_token": "", "property_url": ""})),
         ]
         for provider, key, active, config in api_settings:
             c.execute('INSERT OR IGNORE INTO api_settings (provider, api_key, is_active, config_json) VALUES (?,?,?,?)',

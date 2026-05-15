@@ -10,7 +10,6 @@
 
   // Country phone formats: [country code prefix, min digits, max digits, display name]
   var PHONE_FORMATS = [
-    { prefix: '+92',  digits: [10, 10], name: 'Pakistan',      placeholder: '+92 3XX XXXXXXX' },
     { prefix: '+1',   digits: [10, 10], name: 'USA/Canada',    placeholder: '+1 (555) 123-4567' },
     { prefix: '+44',  digits: [10, 10], name: 'UK',            placeholder: '+44 7XXX XXXXXX' },
     { prefix: '+91',  digits: [10, 10], name: 'India',         placeholder: '+91 9XXX XXXXXX' },

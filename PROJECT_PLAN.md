@@ -280,34 +280,63 @@ Industry-specific posts (one per industry) + additional service posts.
 ---
 
 ## PHASE 10: DASHBOARD — CRM & INTEGRATIONS
-**Priority:** LOW | **Estimated:** 16-24 hours | **Status:** NOT STARTED
+**Priority:** LOW | **Estimated:** 16-24 hours | **Status:** COMPLETED (May 2026)
 
-### Requires API keys:
+### Implemented:
+- [x] CRM Contacts table with full CRUD API (`/api/crm/contacts`)
+- [x] CRM Deals pipeline with stages (discovery → closed_won/lost) (`/api/crm/deals`)
+- [x] CRM Dashboard template (`/crm`) with Kanban-style pipeline board
+- [x] HubSpot sync API (`/api/hubspot/sync`, `/api/hubspot/sync-log`)
+- [x] Integration status API (`/api/integrations/status`) for all providers
+- [x] AI content generation endpoint (`/api/ai/generate`)
+- [x] Stripe payment intent endpoint (`/api/stripe/create-payment`)
+- [x] Twilio call/SMS endpoints (`/api/twilio/call`, `/api/twilio/sms`)
+- [x] Settings page updated with HubSpot CRM section
+- [x] Demo data for contacts, deals, and all integration providers
+- [x] API key management for: Twilio, Stripe, OpenAI, HubSpot (via settings UI)
+
+### API keys supported:
 - Twilio (call tracking) — `TWILIO_SID`, `TWILIO_TOKEN`
 - Stripe (invoicing) — `STRIPE_SECRET_KEY`
 - OpenAI (AI features) — `OPENAI_API_KEY`
-- HubSpot or Salesforce (CRM) — OAuth credentials
+- HubSpot (CRM sync) — HubSpot Private App Token
 
 ---
 
 ## PHASE 11: AI VISIBILITY TRACKING
-**Priority:** LOW | **Estimated:** 14-20 hours | **Status:** NOT STARTED
+**Priority:** LOW | **Estimated:** 14-20 hours | **Status:** COMPLETED (May 2026)
 
-### Build tool to track:
-- Brand mentions in ChatGPT, Copilot, Gemini
-- AI Overview appearances
-- Generative search visibility
-- Competitor comparison
+### Implemented:
+- [x] AI Brand Mentions table with full tracking (`/api/ai-visibility/mentions`)
+- [x] AI Visibility Scores per platform/client (`/api/ai-visibility/scores`)
+- [x] Tracking Queries management (`/api/ai-visibility/queries`)
+- [x] Track new mentions endpoint (`/api/ai-visibility/track`)
+- [x] Score calculation engine (`/api/ai-visibility/scores/calculate`)
+- [x] Client AI visibility report (`/api/ai-visibility/report/{client_id}`)
+- [x] AI Visibility Dashboard template (`/ai-visibility`) with platform cards, filters, scores
+- [x] Demo data for mentions across ChatGPT, Gemini, Copilot, Perplexity, AI Overview
+- [x] Sentiment tracking (positive/negative/neutral/mixed)
+- [x] Competitor mention tracking
+- [x] Platform summary aggregation
 
 ---
 
 ## PHASE 12: CITY-SPECIFIC LANDING PAGES
-**Priority:** LOW | **Estimated:** 8-10 hours | **Status:** NOT STARTED
+**Priority:** LOW | **Estimated:** 8-10 hours | **Status:** COMPLETED (May 2026)
 
-### Create pages like:
-- `pages/cities/seo-dentists-new-york.html`
-- `pages/cities/seo-plumbers-dallas.html`
-- Use script to generate 50+ city × industry combinations
+### Implemented:
+- [x] `generate_city_pages.py` script generates 60 cities × 22 industries = 1,320 landing pages
+- [x] Each page has: full SEO meta tags, LocalBusiness + BreadcrumbList + Service schema markup
+- [x] Each page has: localized hero, service descriptions, process steps, testimonials, stats, CTAs
+- [x] Pages follow existing template pattern (`pages/seo-for-*.html`)
+- [x] Sitemap.xml updated with all 1,320 city page URLs
+- [x] `city_sitemap_entries.xml` generated for reference
+- [x] Proper relative paths (`../../css/style.css`, `../../pages/...`)
+
+### Generated pages:
+- `pages/cities/seo-[industry]-[city].html`
+- Example: `pages/cities/seo-dentists-new-york.html`
+- 60 US cities × 22 industries = 1,320 pages
 
 ---
 

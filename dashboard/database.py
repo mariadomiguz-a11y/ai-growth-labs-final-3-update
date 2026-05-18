@@ -242,7 +242,7 @@ def init_db():
     # API Settings (NEW)
     c.execute('''CREATE TABLE IF NOT EXISTS api_settings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        provider TEXT UNIQUE NOT NULL CHECK(provider IN ('claude','chatgpt','gemini','twilio','smtp','stripe','whatsapp','slack','google_search_console')),
+        provider TEXT UNIQUE NOT NULL CHECK(provider IN ('claude','chatgpt','gemini','twilio','smtp','stripe','whatsapp','slack','google_search_console','hubspot','openai')),
         api_key TEXT,
         is_active INTEGER DEFAULT 0,
         config_json TEXT,
@@ -402,6 +402,179 @@ def init_db():
         is_automated INTEGER DEFAULT 0,
         dna_prompt TEXT,
         order_num INTEGER DEFAULT 0
+    )''')
+    
+    # ===== PHASE 10: CRM & INTEGRATIONS TABLES =====
+    
+    # CRM Contacts (HubSpot-style CRM)
+    c.execute('''CREATE TABLE IF NOT EXISTS crm_contacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        first_name TEXT NOT NULL,
+        last_name TEXT,
+        email TEXT,
+        phone TEXT,
+        company TEXT,
+        job_title TEXT,
+        lifecycle_stage TEXT DEFAULT 'subscriber' CHECK(lifecycle_stage IN ('subscriber','lead','mql','sql','opportunity','customer','evangelist')),
+        lead_source TEXT,
+        last_contacted TEXT,
+        hubspot_id TEXT,
+        notes TEXT,
+        tags TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # CRM Deals / Pipeline
+    c.execute('''CREATE TABLE IF NOT EXISTS crm_deals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contact_id INTEGER REFERENCES crm_contacts(id),
+        client_id INTEGER REFERENCES clients(id),
+        title TEXT NOT NULL,
+        amount REAL DEFAULT 0,
+        stage TEXT DEFAULT 'discovery' CHECK(stage IN ('discovery','qualification','proposal','negotiation','closed_won','closed_lost')),
+        probability INTEGER DEFAULT 10,
+        expected_close_date TEXT,
+        assigned_to INTEGER REFERENCES users(id),
+        hubspot_deal_id TEXT,
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # Twilio Call Tracking
+    c.execute('''CREATE TABLE IF NOT EXISTS call_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        twilio_sid TEXT,
+        from_number TEXT,
+        to_number TEXT,
+        direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound','outbound')),
+        status TEXT DEFAULT 'completed' CHECK(status IN ('queued','ringing','in-progress','completed','busy','no-answer','canceled','failed')),
+        duration INTEGER DEFAULT 0,
+        recording_url TEXT,
+        transcription TEXT,
+        caller_city TEXT,
+        caller_state TEXT,
+        lead_source TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # Twilio SMS Logs
+    c.execute('''CREATE TABLE IF NOT EXISTS sms_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        twilio_sid TEXT,
+        from_number TEXT,
+        to_number TEXT,
+        direction TEXT DEFAULT 'outbound' CHECK(direction IN ('inbound','outbound')),
+        body TEXT,
+        status TEXT DEFAULT 'sent' CHECK(status IN ('queued','sending','sent','delivered','undelivered','failed','received')),
+        media_url TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # Stripe Payment Intents / Transactions
+    c.execute('''CREATE TABLE IF NOT EXISTS stripe_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        invoice_id INTEGER REFERENCES invoices(id),
+        stripe_payment_id TEXT,
+        stripe_customer_id TEXT,
+        amount INTEGER DEFAULT 0,
+        currency TEXT DEFAULT 'usd',
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending','succeeded','failed','refunded','canceled')),
+        payment_method TEXT,
+        receipt_url TEXT,
+        description TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # Stripe Subscriptions
+    c.execute('''CREATE TABLE IF NOT EXISTS stripe_subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        stripe_subscription_id TEXT,
+        stripe_customer_id TEXT,
+        plan_name TEXT,
+        amount INTEGER DEFAULT 0,
+        currency TEXT DEFAULT 'usd',
+        interval_type TEXT DEFAULT 'month' CHECK(interval_type IN ('month','year')),
+        status TEXT DEFAULT 'active' CHECK(status IN ('active','past_due','canceled','trialing','incomplete','paused')),
+        current_period_start TEXT,
+        current_period_end TEXT,
+        cancel_at_period_end INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # OpenAI Usage Tracking
+    c.execute('''CREATE TABLE IF NOT EXISTS ai_usage_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
+        client_id INTEGER REFERENCES clients(id),
+        provider TEXT NOT NULL CHECK(provider IN ('openai','claude','gemini')),
+        model TEXT,
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        total_tokens INTEGER DEFAULT 0,
+        cost_usd REAL DEFAULT 0,
+        request_type TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # HubSpot Sync Log
+    c.execute('''CREATE TABLE IF NOT EXISTS hubspot_sync_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL CHECK(entity_type IN ('contact','deal','company','ticket')),
+        local_id INTEGER,
+        hubspot_id TEXT,
+        action TEXT CHECK(action IN ('create','update','delete','sync')),
+        status TEXT DEFAULT 'success' CHECK(status IN ('success','failed','pending')),
+        error_message TEXT,
+        synced_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # ===== PHASE 11: AI VISIBILITY TRACKING TABLES =====
+    
+    # AI Brand Mentions
+    c.execute('''CREATE TABLE IF NOT EXISTS ai_brand_mentions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        platform TEXT NOT NULL CHECK(platform IN ('chatgpt','gemini','copilot','perplexity','claude','ai_overview')),
+        query TEXT NOT NULL,
+        response_text TEXT,
+        brand_mentioned INTEGER DEFAULT 0,
+        competitor_mentioned TEXT,
+        sentiment TEXT DEFAULT 'neutral' CHECK(sentiment IN ('positive','negative','neutral','mixed')),
+        position_in_response INTEGER,
+        screenshot_url TEXT,
+        tracked_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # AI Visibility Scores (aggregated)
+    c.execute('''CREATE TABLE IF NOT EXISTS ai_visibility_scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        platform TEXT NOT NULL,
+        score REAL DEFAULT 0,
+        total_queries INTEGER DEFAULT 0,
+        mentions_count INTEGER DEFAULT 0,
+        competitor_mentions INTEGER DEFAULT 0,
+        period TEXT,
+        tracked_date TEXT DEFAULT (date('now')),
+        created_at TEXT DEFAULT (datetime('now'))
+    )''')
+    
+    # AI Tracking Queries (what queries to monitor)
+    c.execute('''CREATE TABLE IF NOT EXISTS ai_tracking_queries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER REFERENCES clients(id),
+        query TEXT NOT NULL,
+        category TEXT DEFAULT 'brand' CHECK(category IN ('brand','service','industry','competitor','location')),
+        is_active INTEGER DEFAULT 1,
+        last_checked TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
     )''')
     
     # Create default super admin
@@ -715,6 +888,122 @@ def _insert_demo_data(c):
         for provider, key, active, config in api_settings:
             c.execute('INSERT OR IGNORE INTO api_settings (provider, api_key, is_active, config_json) VALUES (?,?,?,?)',
                       (provider, key, active, config))
+        
+        # ===== PHASE 10: Demo CRM Contacts =====
+        crm_contacts = [
+            (1, 'Robert', 'Chen', 'robert@smilebright.com', '(512) 555-0101', 'SmileBright Dental', 'Owner/Dentist', 'customer', 'website'),
+            (2, 'Sarah', 'Martinez', 'sarah@martinezlegal.com', '(214) 555-0202', 'Martinez Legal', 'Managing Partner', 'customer', 'referral'),
+            (3, 'Marco', 'Bellini', 'marco@bellasitalian.com', '(312) 555-0303', "Bella's Italian", 'Owner', 'customer', 'google_search'),
+            (None, 'Jennifer', 'Adams', 'jennifer@newlead.com', '(415) 555-0901', 'Bay Area Fitness', 'Marketing Director', 'mql', 'linkedin'),
+            (None, 'Kevin', 'Park', 'kevin@parkdental.com', '(469) 555-0902', 'Park Family Dental', 'Owner', 'sql', 'free_audit'),
+            (None, 'Amanda', 'Torres', 'amanda@torreslaw.com', '(713) 555-0903', 'Torres & Associates', 'Partner', 'lead', 'google_ads'),
+        ]
+        for cid, fn, ln, email, phone, company, title, stage, source in crm_contacts:
+            c.execute('INSERT INTO crm_contacts (client_id, first_name, last_name, email, phone, company, job_title, lifecycle_stage, lead_source) VALUES (?,?,?,?,?,?,?,?,?)',
+                      (cid, fn, ln, email, phone, company, title, stage, source))
+        
+        # Demo CRM Deals
+        crm_deals = [
+            (4, None, 'Bay Area Fitness - Growth Pro Package', 2997, 'proposal', 60, '2026-06-15', 6),
+            (5, None, 'Park Family Dental - Growth Elite', 6997, 'negotiation', 75, '2026-06-01', 6),
+            (6, None, 'Torres Law - SEO + Ads Bundle', 4997, 'qualification', 30, '2026-07-01', 6),
+        ]
+        for contact_id, client_id, title, amount, stage, prob, close_date, assigned in crm_deals:
+            c.execute('INSERT INTO crm_deals (contact_id, client_id, title, amount, stage, probability, expected_close_date, assigned_to) VALUES (?,?,?,?,?,?,?,?)',
+                      (contact_id, client_id, title, amount, stage, prob, close_date, assigned))
+        
+        # Demo Call Logs
+        call_logs = [
+            (1, '+15125550101', '+18005550199', 'inbound', 'completed', 185, 'Austin', 'TX', 'google_maps'),
+            (2, '+12145550202', '+18005550199', 'inbound', 'completed', 420, 'Dallas', 'TX', 'google_ads'),
+            (1, '+18005550199', '+15125550101', 'outbound', 'completed', 300, None, None, 'follow_up'),
+            (None, '+14155550901', '+18005550199', 'inbound', 'completed', 95, 'San Francisco', 'CA', 'website'),
+            (5, '+16025550505', '+18005550199', 'inbound', 'no-answer', 0, 'Phoenix', 'AZ', 'google_maps'),
+        ]
+        for cid, from_n, to_n, direction, status, dur, city, state, source in call_logs:
+            c.execute('INSERT INTO call_logs (client_id, from_number, to_number, direction, status, duration, caller_city, caller_state, lead_source) VALUES (?,?,?,?,?,?,?,?,?)',
+                      (cid, from_n, to_n, direction, status, dur, city, state, source))
+        
+        # Demo Stripe Transactions
+        stripe_txns = [
+            (1, 1, 'pi_demo_001', 'cus_demo_001', 299700, 'usd', 'succeeded', 'card', 'Growth Pro - May 2026'),
+            (2, 2, 'pi_demo_002', 'cus_demo_002', 699700, 'usd', 'succeeded', 'card', 'Growth Elite - May 2026'),
+            (3, 3, 'pi_demo_003', 'cus_demo_003', 299700, 'usd', 'succeeded', 'card', 'Growth Pro - May 2026'),
+            (4, 4, 'pi_demo_004', 'cus_demo_004', 99700, 'usd', 'pending', 'card', 'Growth Starter - May 2026'),
+        ]
+        for cid, inv_id, pay_id, cust_id, amount, currency, status, method, desc in stripe_txns:
+            c.execute('INSERT INTO stripe_transactions (client_id, invoice_id, stripe_payment_id, stripe_customer_id, amount, currency, status, payment_method, description) VALUES (?,?,?,?,?,?,?,?,?)',
+                      (cid, inv_id, pay_id, cust_id, amount, currency, status, method, desc))
+        
+        # Demo Stripe Subscriptions
+        stripe_subs = [
+            (1, 'sub_demo_001', 'cus_demo_001', 'Growth Pro', 299700, 'usd', 'month', 'active', '2026-05-01', '2026-06-01'),
+            (2, 'sub_demo_002', 'cus_demo_002', 'Growth Elite', 699700, 'usd', 'month', 'active', '2026-05-01', '2026-06-01'),
+            (4, 'sub_demo_004', 'cus_demo_004', 'Growth Starter', 99700, 'usd', 'month', 'past_due', '2026-04-15', '2026-05-15'),
+        ]
+        for cid, sub_id, cust_id, plan, amount, currency, interval, status, start, end in stripe_subs:
+            c.execute('INSERT INTO stripe_subscriptions (client_id, stripe_subscription_id, stripe_customer_id, plan_name, amount, currency, interval_type, status, current_period_start, current_period_end) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                      (cid, sub_id, cust_id, plan, amount, currency, interval, status, start, end))
+        
+        # Demo AI Usage Log
+        ai_usage = [
+            (1, 1, 'openai', 'gpt-4o', 1200, 800, 2000, 0.06, 'seo_audit'),
+            (1, 2, 'openai', 'gpt-4o', 2500, 1500, 4000, 0.12, 'content_generation'),
+            (1, 1, 'claude', 'claude-sonnet-4-20250514', 1800, 1200, 3000, 0.045, 'competitor_analysis'),
+            (1, 3, 'gemini', 'gemini-pro', 900, 600, 1500, 0.02, 'keyword_research'),
+        ]
+        for uid, cid, provider, model, pt, ct, tt, cost, req_type in ai_usage:
+            c.execute('INSERT INTO ai_usage_log (user_id, client_id, provider, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, request_type) VALUES (?,?,?,?,?,?,?,?,?)',
+                      (uid, cid, provider, model, pt, ct, tt, cost, req_type))
+        
+        # ===== PHASE 11: Demo AI Visibility Data =====
+        ai_mentions = [
+            (1, 'chatgpt', 'best dentist in Austin TX', 'Based on reviews and ratings, some highly recommended dentists in Austin include SmileBright Dental...', 1, None, 'positive', 2),
+            (1, 'gemini', 'top rated dental clinic Austin', 'Here are some top-rated dental clinics in Austin, Texas...', 0, 'Bright Smile Dentistry', 'neutral', None),
+            (2, 'chatgpt', 'best personal injury lawyer Dallas', 'Some well-regarded personal injury lawyers in Dallas include Martinez Legal...', 1, 'Johnson & Associates', 'positive', 3),
+            (2, 'copilot', 'car accident attorney Dallas TX', 'If you need a car accident attorney in Dallas, consider firms like...', 0, 'Dallas Injury Law', 'neutral', None),
+            (1, 'perplexity', 'pediatric dentist Austin recommendations', 'For pediatric dentistry in Austin, SmileBright Dental offers comprehensive family dental services...', 1, None, 'positive', 1),
+            (3, 'chatgpt', 'best Italian restaurant Chicago downtown', 'Some of the best Italian restaurants in downtown Chicago include...', 0, 'Giordanos, Lou Malnatis', 'neutral', None),
+            (5, 'gemini', 'emergency HVAC repair Phoenix', 'For emergency HVAC repair in Phoenix, Phoenix HVAC Pro offers 24/7 service...', 1, 'Arctic Fox HVAC', 'positive', 2),
+            (1, 'ai_overview', 'dental implants cost Austin', 'Dental implant costs in Austin range from $3,000-$6,000. Local providers include SmileBright Dental...', 1, None, 'positive', 4),
+        ]
+        for cid, platform, query, response, mentioned, competitor, sentiment, pos in ai_mentions:
+            c.execute('INSERT INTO ai_brand_mentions (client_id, platform, query, response_text, brand_mentioned, competitor_mentioned, sentiment, position_in_response) VALUES (?,?,?,?,?,?,?,?)',
+                      (cid, platform, query, response, mentioned, competitor, sentiment, pos))
+        
+        # Demo AI Visibility Scores
+        ai_scores = [
+            (1, 'chatgpt', 72.5, 10, 7, 3, '2026-05'),
+            (1, 'gemini', 45.0, 8, 3, 5, '2026-05'),
+            (1, 'copilot', 30.0, 5, 1, 2, '2026-05'),
+            (2, 'chatgpt', 65.0, 8, 5, 4, '2026-05'),
+            (2, 'gemini', 40.0, 6, 2, 3, '2026-05'),
+            (5, 'chatgpt', 55.0, 6, 3, 2, '2026-05'),
+        ]
+        for cid, platform, score, total, mentions, comp, period in ai_scores:
+            c.execute('INSERT INTO ai_visibility_scores (client_id, platform, score, total_queries, mentions_count, competitor_mentions, period) VALUES (?,?,?,?,?,?,?)',
+                      (cid, platform, score, total, mentions, comp, period))
+        
+        # Demo AI Tracking Queries
+        tracking_queries = [
+            (1, 'best dentist in Austin TX', 'brand'),
+            (1, 'dental cleaning near me Austin', 'service'),
+            (1, 'pediatric dentist Austin recommendations', 'service'),
+            (1, 'cosmetic dentistry Austin reviews', 'brand'),
+            (2, 'best personal injury lawyer Dallas', 'brand'),
+            (2, 'car accident attorney Dallas TX', 'service'),
+            (2, 'slip and fall lawyer near me Dallas', 'service'),
+            (3, 'best Italian restaurant Chicago', 'brand'),
+            (5, 'HVAC repair Phoenix AZ', 'service'),
+            (5, 'emergency AC repair Phoenix', 'service'),
+        ]
+        for cid, query, category in tracking_queries:
+            c.execute('INSERT INTO ai_tracking_queries (client_id, query, category) VALUES (?,?,?)',
+                      (cid, query, category))
+        
+        # Add HubSpot to API settings
+        c.execute("INSERT OR IGNORE INTO api_settings (provider, api_key, is_active, config_json) VALUES (?,?,?,?)",
+                  ('hubspot', None, 0, json.dumps({"portal_id": "", "api_key": "", "oauth_client_id": "", "oauth_client_secret": ""})))
         
     except Exception as e:
         print(f"Demo data error: {e}")

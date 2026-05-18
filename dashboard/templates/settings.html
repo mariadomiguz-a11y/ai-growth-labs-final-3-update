@@ -64,6 +64,20 @@
 {% endif %}{% endfor %}
 </div>
 
+<h2 style="margin:30px 0 10px;color:#CBD5E1;font-size:14px;text-transform:uppercase;letter-spacing:1px">🔗 CRM & Sales</h2>
+<div class="settings-grid">
+{% for s in api_settings %}{% if s.provider == 'hubspot' %}
+<div class="card setting-card"><h3>🟠 HubSpot CRM</h3>
+<div class="setting-status">Status: {% if s.is_active %}<span class="badge badge-active">Active</span>{% else %}<span class="badge badge-pending">Not Configured</span>{% endif %}</div>
+<input id="api_key_hubspot" type="password" value="{{ s.api_key or '' }}" placeholder="HubSpot Private App Token" class="form-input">
+<input id="hubspot_portal" placeholder="Portal ID" class="form-input" style="margin-top:6px">
+<small style="color:#64748B">Get from <a href="https://app.hubspot.com/settings" target="_blank">HubSpot Settings</a> → Integrations → Private Apps</small>
+<button class="btn btn-primary btn-full" onclick="saveApiKey('hubspot')" style="margin-top:8px">Save & Activate</button>
+<a href="/crm" class="btn btn-outline btn-full" style="margin-top:6px">Open CRM Dashboard →</a>
+</div>
+{% endif %}{% endfor %}
+</div>
+
 <h2 style="margin:30px 0 10px;color:#CBD5E1;font-size:14px;text-transform:uppercase;letter-spacing:1px">💰 Billing & Analytics</h2>
 <div class="settings-grid">
 {% for s in api_settings %}{% if s.provider in ['stripe','google_search_console'] %}

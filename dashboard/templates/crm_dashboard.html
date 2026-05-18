@@ -1,0 +1,179 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>CRM Dashboard — AI Growth Labs OS</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/dashboard.css"></head><body>
+<aside class="sidebar"><div class="sidebar-brand">AI Growth<span>Labs</span></div>
+<nav><div class="nav-section">Main</div><a href="/dashboard">📊Dashboard</a>
+<a href="/crm" class="active">🤝CRM & Pipeline</a>
+<a href="/ai-visibility">🤖AI Visibility</a>
+<a href="/settings">⚙️API Settings</a>
+<a href="/analytics">📈Analytics</a>
+<a href="/monitor">📡Team Monitor</a>
+<a href="/team-chat">💬Team Chat</a>
+</nav>
+<div class="sidebar-user"><div class="user-avatar">{{ user.full_name[:2]|upper }}</div>
+<div><strong>{{ user.full_name }}</strong><small>{{ user.role|replace('_',' ')|title }}</small></div></div></aside>
+<main class="main">
+<div class="header-bar"><h1>🤝 CRM & Deal Pipeline</h1><span>Manage contacts, track deals, and monitor integrations</span>
+<div class="header-actions"><a href="/dashboard" class="btn btn-outline">← Dashboard</a>
+<button class="btn btn-primary" onclick="showAddContact()">+ New Contact</button>
+<button class="btn btn-outline" onclick="showAddDeal()">+ New Deal</button></div></div>
+
+<!-- Pipeline Summary -->
+<div class="stats-grid" style="margin-bottom:24px">
+<div class="stat-card"><div class="stat-label">Total Pipeline</div><div class="stat-value">${{ "{:,.0f}".format(total_pipeline) }}</div></div>
+<div class="stat-card"><div class="stat-label">Weighted Pipeline</div><div class="stat-value">${{ "{:,.0f}".format(weighted_pipeline) }}</div></div>
+<div class="stat-card"><div class="stat-label">Active Deals</div><div class="stat-value">{{ deals|length }}</div></div>
+<div class="stat-card"><div class="stat-label">Total Contacts</div><div class="stat-value">{{ contacts|length }}</div></div>
+</div>
+
+<!-- Pipeline Board -->
+<h2 style="margin:20px 0 10px;color:#CBD5E1;font-size:14px;text-transform:uppercase;letter-spacing:1px">📊 Deal Pipeline</h2>
+<div style="display:flex;gap:16px;overflow-x:auto;padding-bottom:16px">
+{% set stages = [('discovery','Discovery','#3B82F6'),('qualification','Qualification','#8B5CF6'),('proposal','Proposal','#F59E0B'),('negotiation','Negotiation','#EF4444'),('closed_won','Closed Won','#10B981'),('closed_lost','Closed Lost','#6B7280')] %}
+{% for stage_key, stage_label, stage_color in stages %}
+<div style="min-width:260px;flex:1">
+<div style="background:{{ stage_color }}22;border:1px solid {{ stage_color }}44;border-radius:8px;padding:12px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+<span style="font-weight:700;color:{{ stage_color }}">{{ stage_label }}</span>
+<span style="background:{{ stage_color }}33;color:{{ stage_color }};padding:2px 8px;border-radius:12px;font-size:12px">
+{{ pipeline_stats.get(stage_key,{}).get('count',0) }} | ${{ "{:,.0f}".format(pipeline_stats.get(stage_key,{}).get('total',0)) }}
+</span>
+</div>
+{% for deal in deals %}{% if deal.stage == stage_key %}
+<div class="card" style="margin-bottom:8px;padding:12px;cursor:pointer" onclick="editDeal({{ deal.id }})">
+<div style="font-weight:600;font-size:13px">{{ deal.title }}</div>
+<div style="color:#94A3B8;font-size:12px;margin-top:4px">{{ deal.contact_name or 'No contact' }} — {{ deal.company or '' }}</div>
+<div style="display:flex;justify-content:space-between;margin-top:8px">
+<span style="font-weight:700;color:#10B981">${{ "{:,.0f}".format(deal.amount or 0) }}</span>
+<span style="color:#64748B;font-size:11px">{{ deal.probability }}% prob</span>
+</div>
+{% if deal.expected_close_date %}<div style="color:#64748B;font-size:11px;margin-top:4px">Close: {{ deal.expected_close_date }}</div>{% endif %}
+</div>
+{% endif %}{% endfor %}
+</div>
+</div>
+{% endfor %}
+</div>
+
+<!-- Contacts Table -->
+<h2 style="margin:30px 0 10px;color:#CBD5E1;font-size:14px;text-transform:uppercase;letter-spacing:1px">👥 CRM Contacts</h2>
+<div class="card">
+<div class="table-container"><table class="table">
+<thead><tr><th>Name</th><th>Company</th><th>Email</th><th>Stage</th><th>Source</th><th>Linked Client</th><th>Actions</th></tr></thead>
+<tbody>
+{% for c in contacts %}
+<tr>
+<td><strong>{{ c.first_name }} {{ c.last_name or '' }}</strong><div style="color:#64748B;font-size:11px">{{ c.job_title or '' }}</div></td>
+<td>{{ c.company or '-' }}</td>
+<td>{{ c.email or '-' }}</td>
+<td><span class="badge badge-{% if c.lifecycle_stage == 'customer' %}active{% elif c.lifecycle_stage in ['sql','opportunity'] %}warning{% else %}pending{% endif %}">{{ c.lifecycle_stage|upper }}</span></td>
+<td>{{ c.lead_source or '-' }}</td>
+<td>{{ c.linked_client or '-' }}</td>
+<td><button class="btn btn-sm btn-outline" onclick="editContact({{ c.id }})">Edit</button></td>
+</tr>
+{% endfor %}
+</tbody></table></div></div>
+
+<!-- Integration Quick Status -->
+<h2 style="margin:30px 0 10px;color:#CBD5E1;font-size:14px;text-transform:uppercase;letter-spacing:1px">🔗 Integration Status</h2>
+<div class="stats-grid">
+<div class="card" style="padding:16px;text-align:center">
+<div style="font-size:24px">📞</div><div style="font-weight:700;margin-top:4px">Twilio</div>
+<div id="twilio-status" style="color:#64748B;font-size:12px">Checking...</div>
+</div>
+<div class="card" style="padding:16px;text-align:center">
+<div style="font-size:24px">💳</div><div style="font-weight:700;margin-top:4px">Stripe</div>
+<div id="stripe-status" style="color:#64748B;font-size:12px">Checking...</div>
+</div>
+<div class="card" style="padding:16px;text-align:center">
+<div style="font-size:24px">🤖</div><div style="font-weight:700;margin-top:4px">OpenAI</div>
+<div id="openai-status" style="color:#64748B;font-size:12px">Checking...</div>
+</div>
+<div class="card" style="padding:16px;text-align:center">
+<div style="font-size:24px">🟠</div><div style="font-weight:700;margin-top:4px">HubSpot</div>
+<div id="hubspot-status" style="color:#64748B;font-size:12px">Checking...</div>
+</div>
+</div>
+
+<!-- Add Contact Modal -->
+<div id="contact-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:none;align-items:center;justify-content:center">
+<div class="card" style="width:500px;max-width:90%;padding:24px;max-height:90vh;overflow-y:auto">
+<h3 id="contact-modal-title">Add New Contact</h3>
+<input id="cf_first_name" placeholder="First Name *" class="form-input" style="margin-top:12px">
+<input id="cf_last_name" placeholder="Last Name" class="form-input" style="margin-top:8px">
+<input id="cf_email" placeholder="Email" class="form-input" style="margin-top:8px">
+<input id="cf_phone" placeholder="Phone" class="form-input" style="margin-top:8px">
+<input id="cf_company" placeholder="Company" class="form-input" style="margin-top:8px">
+<input id="cf_job_title" placeholder="Job Title" class="form-input" style="margin-top:8px">
+<select id="cf_stage" class="form-input" style="margin-top:8px">
+<option value="subscriber">Subscriber</option><option value="lead">Lead</option>
+<option value="mql">MQL</option><option value="sql">SQL</option>
+<option value="opportunity">Opportunity</option><option value="customer">Customer</option>
+</select>
+<input id="cf_source" placeholder="Lead Source" class="form-input" style="margin-top:8px">
+<textarea id="cf_notes" placeholder="Notes" class="form-input" style="margin-top:8px;min-height:60px"></textarea>
+<div style="display:flex;gap:8px;margin-top:16px">
+<button class="btn btn-primary" onclick="saveContact()" style="flex:1">Save Contact</button>
+<button class="btn btn-outline" onclick="closeModal('contact-modal')" style="flex:1">Cancel</button>
+</div></div></div>
+
+<!-- Add Deal Modal -->
+<div id="deal-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:none;align-items:center;justify-content:center">
+<div class="card" style="width:500px;max-width:90%;padding:24px;max-height:90vh;overflow-y:auto">
+<h3 id="deal-modal-title">Add New Deal</h3>
+<input id="df_title" placeholder="Deal Title *" class="form-input" style="margin-top:12px">
+<input id="df_amount" type="number" placeholder="Amount ($)" class="form-input" style="margin-top:8px">
+<select id="df_stage" class="form-input" style="margin-top:8px">
+<option value="discovery">Discovery</option><option value="qualification">Qualification</option>
+<option value="proposal">Proposal</option><option value="negotiation">Negotiation</option>
+<option value="closed_won">Closed Won</option><option value="closed_lost">Closed Lost</option>
+</select>
+<input id="df_probability" type="number" placeholder="Probability (%)" value="10" class="form-input" style="margin-top:8px">
+<input id="df_close_date" type="date" class="form-input" style="margin-top:8px">
+<textarea id="df_notes" placeholder="Notes" class="form-input" style="margin-top:8px;min-height:60px"></textarea>
+<div style="display:flex;gap:8px;margin-top:16px">
+<button class="btn btn-primary" onclick="saveDeal()" style="flex:1">Save Deal</button>
+<button class="btn btn-outline" onclick="closeModal('deal-modal')" style="flex:1">Cancel</button>
+</div></div></div>
+
+<script>
+function showAddContact(){document.getElementById('contact-modal').style.display='flex'}
+function showAddDeal(){document.getElementById('deal-modal').style.display='flex'}
+function closeModal(id){document.getElementById(id).style.display='none'}
+
+function saveContact(){
+    const data={first_name:document.getElementById('cf_first_name').value,last_name:document.getElementById('cf_last_name').value,
+        email:document.getElementById('cf_email').value,phone:document.getElementById('cf_phone').value,
+        company:document.getElementById('cf_company').value,job_title:document.getElementById('cf_job_title').value,
+        lifecycle_stage:document.getElementById('cf_stage').value,lead_source:document.getElementById('cf_source').value,
+        notes:document.getElementById('cf_notes').value};
+    if(!data.first_name){alert('First name is required');return}
+    fetch('/api/crm/contacts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+    .then(r=>r.json()).then(r=>{alert(r.message);location.reload()}).catch(e=>alert('Error: '+e))}
+
+function saveDeal(){
+    const data={title:document.getElementById('df_title').value,amount:parseFloat(document.getElementById('df_amount').value)||0,
+        stage:document.getElementById('df_stage').value,probability:parseInt(document.getElementById('df_probability').value)||10,
+        expected_close_date:document.getElementById('df_close_date').value,notes:document.getElementById('df_notes').value};
+    if(!data.title){alert('Deal title is required');return}
+    fetch('/api/crm/deals',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+    .then(r=>r.json()).then(r=>{alert(r.message);location.reload()}).catch(e=>alert('Error: '+e))}
+
+function editContact(id){alert('Edit contact #'+id+' — feature coming soon')}
+function editDeal(id){alert('Edit deal #'+id+' — feature coming soon')}
+
+// Check integration status on load
+fetch('/api/integrations/status').then(r=>r.json()).then(data=>{
+    data.integrations.forEach(i=>{
+        const el=document.getElementById(i.provider+'-status');
+        if(el) el.innerHTML=`<span class="badge badge-${i.status==='active'?'active':i.status==='configured'?'warning':'pending'}">${i.status.toUpperCase()}</span>`;
+    })
+}).catch(()=>{
+    ['twilio','stripe','openai','hubspot'].forEach(p=>{
+        const el=document.getElementById(p+'-status');
+        if(el) el.innerHTML='<span class="badge badge-pending">NOT CONFIGURED</span>';
+    })
+});
+</script>
+</main></body></html>

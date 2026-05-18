@@ -2554,6 +2554,713 @@ async def integration_status(request: Request):
 
 
 # ==========================================
+# PHASE 10: CRM & INTEGRATIONS API
+# ==========================================
+
+# ----- CRM CONTACTS -----
+@app.get("/api/crm/contacts")
+async def list_crm_contacts(request: Request):
+    user = require_role(request, ["super_admin", "sales", "account_manager", "operations_manager"])
+    db = get_db()
+    contacts = [dict(r) for r in db.execute("""
+        SELECT cc.*, c.business_name as linked_client FROM crm_contacts cc 
+        LEFT JOIN clients c ON cc.client_id=c.id ORDER BY cc.updated_at DESC
+    """).fetchall()]
+    db.close()
+    return {"contacts": contacts}
+
+@app.post("/api/crm/contacts")
+async def create_crm_contact(request: Request):
+    user = require_role(request, ["super_admin", "sales", "account_manager"])
+    data = await request.json()
+    db = get_db()
+    c = db.cursor()
+    c.execute("""INSERT INTO crm_contacts (client_id, first_name, last_name, email, phone, company, job_title, lifecycle_stage, lead_source, notes, tags)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+              (data.get("client_id"), data["first_name"], data.get("last_name"), data.get("email"),
+               data.get("phone"), data.get("company"), data.get("job_title"),
+               data.get("lifecycle_stage", "subscriber"), data.get("lead_source"), data.get("notes"), data.get("tags")))
+    contact_id = c.lastrowid
+    log_activity(db, user["id"], "crm_contact_created", f"CRM contact: {data['first_name']} {data.get('last_name','')}", "crm_contact", contact_id)
+    db.commit()
+    db.close()
+    return {"id": contact_id, "message": "CRM contact created"}
+
+@app.put("/api/crm/contacts/{contact_id}")
+async def update_crm_contact(contact_id: int, request: Request):
+    user = require_role(request, ["super_admin", "sales", "account_manager"])
+    data = await request.json()
+    db = get_db()
+    fields = []
+    values = []
+    for field in ["first_name", "last_name", "email", "phone", "company", "job_title", "lifecycle_stage", "lead_source", "notes", "tags", "client_id"]:
+        if field in data:
+            fields.append(f"{field}=?")
+            values.append(data[field])
+    if fields:
+        fields.append("updated_at=datetime('now')")
+        values.append(contact_id)
+        db.execute(f"UPDATE crm_contacts SET {','.join(fields)} WHERE id=?", values)
+        log_activity(db, user["id"], "crm_contact_updated", f"Updated CRM contact #{contact_id}", "crm_contact", contact_id)
+        db.commit()
+    db.close()
+    return {"message": "CRM contact updated"}
+
+@app.get("/api/crm/contacts/{contact_id}")
+async def get_crm_contact(contact_id: int, request: Request):
+    user = require_role(request, ["super_admin", "sales", "account_manager", "operations_manager"])
+    db = get_db()
+    contact = db.execute("SELECT * FROM crm_contacts WHERE id=?", (contact_id,)).fetchone()
+    if not contact:
+        db.close()
+        raise HTTPException(status_code=404, detail="Contact not found")
+    contact = dict(contact)
+    contact["deals"] = [dict(r) for r in db.execute("SELECT * FROM crm_deals WHERE contact_id=? ORDER BY created_at DESC", (contact_id,)).fetchall()]
+    db.close()
+    return {"contact": contact}
+
+# ----- CRM DEALS / PIPELINE -----
+@app.get("/api/crm/deals")
+async def list_crm_deals(request: Request):
+    user = require_role(request, ["super_admin", "sales", "account_manager", "operations_manager"])
+    db = get_db()
+    deals = [dict(r) for r in db.execute("""
+        SELECT d.*, cc.first_name || ' ' || COALESCE(cc.last_name,'') as contact_name, cc.company,
+               u.full_name as assigned_name
+        FROM crm_deals d LEFT JOIN crm_contacts cc ON d.contact_id=cc.id
+        LEFT JOIN users u ON d.assigned_to=u.id ORDER BY d.updated_at DESC
+    """).fetchall()]
+    pipeline = {}
+    for deal in deals:
+        stage = deal["stage"]
+        if stage not in pipeline:
+            pipeline[stage] = {"deals": [], "total": 0, "count": 0}
+        pipeline[stage]["deals"].append(deal)
+        pipeline[stage]["total"] += deal["amount"] or 0
+        pipeline[stage]["count"] += 1
+    db.close()
+    return {"deals": deals, "pipeline": pipeline}
+
+@app.post("/api/crm/deals")
+async def create_crm_deal(request: Request):
+    user = require_role(request, ["super_admin", "sales", "account_manager"])
+    data = await request.json()
+    db = get_db()
+    c = db.cursor()
+    c.execute("""INSERT INTO crm_deals (contact_id, client_id, title, amount, stage, probability, expected_close_date, assigned_to, notes)
+                 VALUES (?,?,?,?,?,?,?,?,?)""",
+              (data.get("contact_id"), data.get("client_id"), data["title"], data.get("amount", 0),
+               data.get("stage", "discovery"), data.get("probability", 10), data.get("expected_close_date"),
+               data.get("assigned_to", user["id"]), data.get("notes")))
+    deal_id = c.lastrowid
+    log_activity(db, user["id"], "crm_deal_created", f"Deal: {data['title']} (${data.get('amount',0):,.0f})", "crm_deal", deal_id)
+    db.commit()
+    db.close()
+    return {"id": deal_id, "message": "Deal created"}
+
+@app.put("/api/crm/deals/{deal_id}")
+async def update_crm_deal(deal_id: int, request: Request):
+    user = require_role(request, ["super_admin", "sales", "account_manager"])
+    data = await request.json()
+    db = get_db()
+    fields = []
+    values = []
+    for field in ["title", "amount", "stage", "probability", "expected_close_date", "assigned_to", "notes", "contact_id", "client_id"]:
+        if field in data:
+            fields.append(f"{field}=?")
+            values.append(data[field])
+    if fields:
+        fields.append("updated_at=datetime('now')")
+        values.append(deal_id)
+        db.execute(f"UPDATE crm_deals SET {','.join(fields)} WHERE id=?", values)
+        log_activity(db, user["id"], "crm_deal_updated", f"Deal #{deal_id} updated", "crm_deal", deal_id)
+        db.commit()
+    db.close()
+    return {"message": "Deal updated"}
+
+# ----- CRM DASHBOARD -----
+@app.get("/crm", response_class=HTMLResponse)
+async def crm_dashboard(request: Request):
+    user = get_current_user(request)
+    if not user or user["role"] not in ("super_admin", "sales", "account_manager", "operations_manager"):
+        return RedirectResponse(url="/login")
+    db = get_db()
+    contacts = [dict(r) for r in db.execute("SELECT * FROM crm_contacts ORDER BY updated_at DESC LIMIT 50").fetchall()]
+    deals = [dict(r) for r in db.execute("""
+        SELECT d.*, cc.first_name || ' ' || COALESCE(cc.last_name,'') as contact_name, cc.company
+        FROM crm_deals d LEFT JOIN crm_contacts cc ON d.contact_id=cc.id ORDER BY d.updated_at DESC
+    """).fetchall()]
+    pipeline_stats = {}
+    for d in deals:
+        stage = d["stage"]
+        if stage not in pipeline_stats:
+            pipeline_stats[stage] = {"count": 0, "total": 0}
+        pipeline_stats[stage]["count"] += 1
+        pipeline_stats[stage]["total"] += d["amount"] or 0
+    total_pipeline = sum(s["total"] for s in pipeline_stats.values())
+    weighted_pipeline = sum(d["amount"] * d["probability"] / 100 for d in deals if d["amount"])
+    db.close()
+    return templates.TemplateResponse("crm_dashboard.html", {
+        "request": request, "user": user, "contacts": contacts, "deals": deals,
+        "pipeline_stats": pipeline_stats, "total_pipeline": total_pipeline, "weighted_pipeline": weighted_pipeline
+    })
+
+# ----- TWILIO CALL TRACKING -----
+@app.get("/api/calls")
+async def list_calls(request: Request):
+    user = require_role(request, ["super_admin", "sales", "operations_manager"])
+    db = get_db()
+    calls = [dict(r) for r in db.execute("""
+        SELECT cl.*, c.business_name FROM call_logs cl LEFT JOIN clients c ON cl.client_id=c.id ORDER BY cl.created_at DESC LIMIT 100
+    """).fetchall()]
+    db.close()
+    return {"calls": calls}
+
+@app.post("/api/calls")
+async def log_call(request: Request):
+    user = require_role(request, ["super_admin", "sales", "operations_manager"])
+    data = await request.json()
+    db = get_db()
+    c = db.cursor()
+    c.execute("""INSERT INTO call_logs (client_id, from_number, to_number, direction, status, duration, caller_city, caller_state, lead_source)
+                 VALUES (?,?,?,?,?,?,?,?,?)""",
+              (data.get("client_id"), data.get("from_number"), data.get("to_number"),
+               data.get("direction", "inbound"), data.get("status", "completed"),
+               data.get("duration", 0), data.get("caller_city"), data.get("caller_state"), data.get("lead_source")))
+    call_id = c.lastrowid
+    log_activity(db, user["id"], "call_logged", f"Call from {data.get('from_number','unknown')}", "call", call_id)
+    db.commit()
+    db.close()
+    return {"id": call_id, "message": "Call logged"}
+
+@app.post("/api/twilio/voice/incoming")
+async def twilio_voice_webhook(request: Request):
+    """Twilio voice webhook — logs incoming calls and returns TwiML"""
+    form = await request.form()
+    from_number = form.get("From", "")
+    to_number = form.get("To", "")
+    call_sid = form.get("CallSid", "")
+    caller_city = form.get("CallerCity", "")
+    caller_state = form.get("CallerState", "")
+    
+    db = get_db()
+    client = db.execute("SELECT id FROM clients WHERE phone LIKE ?", (f"%{from_number[-10:]}%",)).fetchone() if len(from_number) >= 10 else None
+    client_id = client["id"] if client else None
+    db.execute("""INSERT INTO call_logs (client_id, twilio_sid, from_number, to_number, direction, status, caller_city, caller_state, lead_source)
+                  VALUES (?,?,?,?,?,?,?,?,?)""",
+               (client_id, call_sid, from_number, to_number, "inbound", "ringing", caller_city, caller_state, "phone"))
+    db.commit()
+    db.close()
+    
+    twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Thank you for calling AI Growth Labs. Your call is important to us. Please hold while we connect you.</Say><Dial>+18005550199</Dial></Response>'
+    return Response(content=twiml, media_type="text/xml")
+
+@app.post("/api/twilio/sms/incoming")
+async def twilio_sms_webhook(request: Request):
+    """Twilio SMS webhook — logs incoming SMS"""
+    form = await request.form()
+    from_number = form.get("From", "")
+    to_number = form.get("To", "")
+    body = form.get("Body", "")
+    sms_sid = form.get("SmsSid", "")
+    
+    db = get_db()
+    client = db.execute("SELECT id FROM clients WHERE phone LIKE ?", (f"%{from_number[-10:]}%",)).fetchone() if len(from_number) >= 10 else None
+    client_id = client["id"] if client else None
+    db.execute("""INSERT INTO sms_logs (client_id, twilio_sid, from_number, to_number, direction, body, status)
+                  VALUES (?,?,?,?,?,?,?)""",
+               (client_id, sms_sid, from_number, to_number, "inbound", body, "received"))
+    db.commit()
+    db.close()
+    
+    twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Message>Thanks for contacting AI Growth Labs! A team member will respond shortly.</Message></Response>'
+    return Response(content=twiml, media_type="text/xml")
+
+@app.post("/api/twilio/sms/send")
+async def send_sms(request: Request):
+    """Send SMS via Twilio (demo mode if no API key)"""
+    user = require_role(request, ["super_admin", "sales", "account_manager"])
+    data = await request.json()
+    
+    db = get_db()
+    twilio_config = db.execute("SELECT * FROM api_settings WHERE provider='twilio' AND is_active=1").fetchone()
+    
+    sms_record = {
+        "to": data.get("to"),
+        "body": data.get("body", ""),
+        "status": "demo_sent",
+        "mode": "demo"
+    }
+    
+    if twilio_config and twilio_config["api_key"]:
+        try:
+            from twilio.rest import Client as TwilioClient
+            config = json.loads(twilio_config["config_json"] or "{}")
+            tw_client = TwilioClient(config.get("account_sid", twilio_config["api_key"]), config.get("auth_token", ""))
+            message = tw_client.messages.create(
+                body=data.get("body", ""),
+                from_=config.get("phone_number", ""),
+                to=data["to"]
+            )
+            sms_record["status"] = "sent"
+            sms_record["sid"] = message.sid
+            sms_record["mode"] = "live"
+        except Exception as e:
+            sms_record["status"] = "failed"
+            sms_record["error"] = str(e)
+    
+    db.execute("""INSERT INTO sms_logs (client_id, from_number, to_number, direction, body, status)
+                  VALUES (?,?,?,?,?,?)""",
+               (data.get("client_id"), "+18005550199", data["to"], "outbound", data.get("body",""), sms_record["status"]))
+    log_activity(db, user["id"], "sms_sent", f"SMS to {data['to']}: {sms_record['status']}", "sms", 0)
+    db.commit()
+    db.close()
+    return {"message": "SMS processed", "sms": sms_record}
+
+@app.get("/api/sms")
+async def list_sms(request: Request):
+    user = require_role(request, ["super_admin", "sales", "operations_manager"])
+    db = get_db()
+    messages = [dict(r) for r in db.execute("""
+        SELECT sl.*, c.business_name FROM sms_logs sl LEFT JOIN clients c ON sl.client_id=c.id ORDER BY sl.created_at DESC LIMIT 100
+    """).fetchall()]
+    db.close()
+    return {"messages": messages}
+
+# ----- STRIPE INTEGRATION -----
+@app.post("/api/stripe/create-payment")
+async def stripe_create_payment(request: Request):
+    """Create Stripe payment intent (demo mode if no API key)"""
+    user = require_role(request, ["super_admin", "finance"])
+    data = await request.json()
+    
+    db = get_db()
+    stripe_config = db.execute("SELECT * FROM api_settings WHERE provider='stripe' AND is_active=1").fetchone()
+    
+    payment = {
+        "amount": data.get("amount", 0),
+        "currency": data.get("currency", "usd"),
+        "client_id": data.get("client_id"),
+        "status": "demo_created",
+        "mode": "demo"
+    }
+    
+    if stripe_config and stripe_config["api_key"]:
+        try:
+            import stripe as stripe_lib
+            stripe_lib.api_key = stripe_config["api_key"]
+            intent = stripe_lib.PaymentIntent.create(
+                amount=int(data["amount"] * 100),
+                currency=data.get("currency", "usd"),
+                metadata={"client_id": str(data.get("client_id", ""))}
+            )
+            payment["stripe_id"] = intent.id
+            payment["client_secret"] = intent.client_secret
+            payment["status"] = "created"
+            payment["mode"] = "live"
+        except Exception as e:
+            payment["status"] = "failed"
+            payment["error"] = str(e)
+    
+    db.execute("""INSERT INTO stripe_transactions (client_id, invoice_id, amount, currency, status, description)
+                  VALUES (?,?,?,?,?,?)""",
+               (data.get("client_id"), data.get("invoice_id"), int(data.get("amount", 0) * 100),
+                data.get("currency", "usd"), payment["status"], data.get("description", "")))
+    log_activity(db, user["id"], "stripe_payment", f"Payment ${data.get('amount',0):,.2f} — {payment['status']}", "stripe", 0)
+    db.commit()
+    db.close()
+    return {"message": "Payment processed", "payment": payment}
+
+@app.get("/api/stripe/transactions")
+async def list_stripe_transactions(request: Request):
+    user = require_role(request, ["super_admin", "finance"])
+    db = get_db()
+    txns = [dict(r) for r in db.execute("""
+        SELECT st.*, c.business_name FROM stripe_transactions st LEFT JOIN clients c ON st.client_id=c.id ORDER BY st.created_at DESC
+    """).fetchall()]
+    db.close()
+    return {"transactions": txns}
+
+@app.get("/api/stripe/subscriptions")
+async def list_stripe_subscriptions(request: Request):
+    user = require_role(request, ["super_admin", "finance"])
+    db = get_db()
+    subs = [dict(r) for r in db.execute("""
+        SELECT ss.*, c.business_name FROM stripe_subscriptions ss LEFT JOIN clients c ON ss.client_id=c.id ORDER BY ss.created_at DESC
+    """).fetchall()]
+    db.close()
+    return {"subscriptions": subs}
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request):
+    """Stripe webhook endpoint for payment events"""
+    payload = await request.body()
+    db = get_db()
+    stripe_config = db.execute("SELECT * FROM api_settings WHERE provider='stripe'").fetchone()
+    
+    try:
+        event_data = json.loads(payload)
+        event_type = event_data.get("type", "")
+        
+        if event_type == "payment_intent.succeeded":
+            pi = event_data.get("data", {}).get("object", {})
+            db.execute("""UPDATE stripe_transactions SET status='succeeded' WHERE stripe_payment_id=?""", (pi.get("id"),))
+        elif event_type == "invoice.paid":
+            inv = event_data.get("data", {}).get("object", {})
+            db.execute("""UPDATE stripe_subscriptions SET status='active' WHERE stripe_customer_id=?""", (inv.get("customer"),))
+        elif event_type == "customer.subscription.deleted":
+            sub = event_data.get("data", {}).get("object", {})
+            db.execute("""UPDATE stripe_subscriptions SET status='canceled' WHERE stripe_subscription_id=?""", (sub.get("id"),))
+        
+        db.commit()
+    except Exception:
+        pass
+    db.close()
+    return {"received": True}
+
+# ----- OPENAI INTEGRATION -----
+@app.post("/api/ai/generate")
+async def ai_generate_content(request: Request):
+    """Generate content using OpenAI/Claude/Gemini (demo mode if no API key)"""
+    user = require_auth(request)
+    data = await request.json()
+    
+    prompt = data.get("prompt", "")
+    provider = data.get("provider", "openai")
+    request_type = data.get("request_type", "general")
+    client_id = data.get("client_id")
+    
+    db = get_db()
+    api_config = db.execute("SELECT * FROM api_settings WHERE provider=? AND is_active=1", (provider if provider != "openai" else "chatgpt",)).fetchone()
+    
+    result = {
+        "content": "",
+        "provider": provider,
+        "mode": "demo",
+        "tokens_used": 0,
+        "cost": 0
+    }
+    
+    if api_config and api_config["api_key"]:
+        try:
+            config = json.loads(api_config["config_json"] or "{}")
+            if provider == "openai":
+                import openai as openai_lib
+                oai_client = openai_lib.OpenAI(api_key=api_config["api_key"])
+                response = oai_client.chat.completions.create(
+                    model=config.get("model", "gpt-4o"),
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=config.get("max_tokens", 2000)
+                )
+                result["content"] = response.choices[0].message.content
+                result["tokens_used"] = response.usage.total_tokens if response.usage else 0
+                result["mode"] = "live"
+            elif provider == "claude":
+                import anthropic
+                anth_client = anthropic.Anthropic(api_key=api_config["api_key"])
+                response = anth_client.messages.create(
+                    model=config.get("model", "claude-sonnet-4-20250514"),
+                    max_tokens=config.get("max_tokens", 2000),
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                result["content"] = response.content[0].text
+                result["tokens_used"] = (response.usage.input_tokens or 0) + (response.usage.output_tokens or 0)
+                result["mode"] = "live"
+            elif provider == "gemini":
+                import google.generativeai as genai
+                genai.configure(api_key=api_config["api_key"])
+                model = genai.GenerativeModel(config.get("model", "gemini-pro"))
+                response = model.generate_content(prompt)
+                result["content"] = response.text
+                result["mode"] = "live"
+        except Exception as e:
+            result["error"] = str(e)
+    else:
+        result["content"] = f"[Demo Mode] AI-generated content for: {prompt[:100]}...\n\nTo enable live AI generation, add your API key in Settings > API Integrations.\n\nSample output: This is a placeholder response demonstrating the AI content generation capability. In production, this would contain real AI-generated content tailored to your specific request."
+        result["tokens_used"] = 150
+    
+    db.execute("""INSERT INTO ai_usage_log (user_id, client_id, provider, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, request_type)
+                  VALUES (?,?,?,?,?,?,?,?,?)""",
+               (user["id"], client_id, provider, "demo", 0, 0, result["tokens_used"], result.get("cost", 0), request_type))
+    log_activity(db, user["id"], "ai_content_generated", f"AI content ({provider}): {request_type}", "ai", 0)
+    db.commit()
+    db.close()
+    return {"message": "Content generated", "result": result}
+
+@app.get("/api/ai/usage")
+async def ai_usage_stats(request: Request):
+    user = require_role(request, ["super_admin", "operations_manager"])
+    db = get_db()
+    usage = [dict(r) for r in db.execute("""
+        SELECT aul.*, u.full_name as user_name, c.business_name
+        FROM ai_usage_log aul LEFT JOIN users u ON aul.user_id=u.id LEFT JOIN clients c ON aul.client_id=c.id
+        ORDER BY aul.created_at DESC LIMIT 100
+    """).fetchall()]
+    totals = db.execute("""
+        SELECT provider, SUM(total_tokens) as total_tokens, SUM(cost_usd) as total_cost, COUNT(*) as request_count
+        FROM ai_usage_log GROUP BY provider
+    """).fetchall()
+    db.close()
+    return {"usage": usage, "totals": [dict(r) for r in totals]}
+
+# ----- HUBSPOT INTEGRATION -----
+@app.post("/api/hubspot/sync")
+async def hubspot_sync(request: Request):
+    """Sync contacts/deals with HubSpot (demo mode if no API key)"""
+    user = require_role(request, ["super_admin"])
+    data = await request.json()
+    entity_type = data.get("entity_type", "contact")
+    
+    db = get_db()
+    hubspot_config = db.execute("SELECT * FROM api_settings WHERE provider='hubspot' AND is_active=1").fetchone()
+    
+    sync_result = {
+        "entity_type": entity_type,
+        "synced": 0,
+        "failed": 0,
+        "mode": "demo"
+    }
+    
+    if hubspot_config and hubspot_config["api_key"]:
+        sync_result["mode"] = "live"
+        sync_result["note"] = "HubSpot sync would execute here with live API"
+    else:
+        if entity_type == "contact":
+            contacts = db.execute("SELECT COUNT(*) FROM crm_contacts").fetchone()[0]
+            sync_result["synced"] = contacts
+            sync_result["note"] = f"Demo: {contacts} contacts would sync to HubSpot. Add API key in Settings."
+        elif entity_type == "deal":
+            deals_count = db.execute("SELECT COUNT(*) FROM crm_deals").fetchone()[0]
+            sync_result["synced"] = deals_count
+            sync_result["note"] = f"Demo: {deals_count} deals would sync to HubSpot. Add API key in Settings."
+    
+    db.execute("""INSERT INTO hubspot_sync_log (entity_type, action, status) VALUES (?,?,?)""",
+               (entity_type, "sync", "success"))
+    log_activity(db, user["id"], "hubspot_sync", f"HubSpot sync: {entity_type} ({sync_result['mode']})", "hubspot", 0)
+    db.commit()
+    db.close()
+    return {"message": "HubSpot sync completed", "result": sync_result}
+
+@app.get("/api/hubspot/sync-log")
+async def hubspot_sync_log(request: Request):
+    user = require_role(request, ["super_admin"])
+    db = get_db()
+    logs = [dict(r) for r in db.execute("SELECT * FROM hubspot_sync_log ORDER BY synced_at DESC LIMIT 50").fetchall()]
+    db.close()
+    return {"logs": logs}
+
+# ==========================================
+# PHASE 11: AI VISIBILITY TRACKING API
+# ==========================================
+
+@app.get("/ai-visibility", response_class=HTMLResponse)
+async def ai_visibility_page(request: Request):
+    user = get_current_user(request)
+    if not user or user["role"] not in ("super_admin", "operations_manager", "tech_seo", "sales", "account_manager"):
+        return RedirectResponse(url="/login")
+    db = get_db()
+    clients = [dict(r) for r in db.execute("SELECT id, business_name FROM clients WHERE status='active' ORDER BY business_name").fetchall()]
+    mentions = [dict(r) for r in db.execute("""
+        SELECT abm.*, c.business_name FROM ai_brand_mentions abm
+        LEFT JOIN clients c ON abm.client_id=c.id ORDER BY abm.tracked_at DESC LIMIT 50
+    """).fetchall()]
+    scores = [dict(r) for r in db.execute("""
+        SELECT avs.*, c.business_name FROM ai_visibility_scores avs
+        LEFT JOIN clients c ON avs.client_id=c.id ORDER BY avs.tracked_date DESC
+    """).fetchall()]
+    tracking_queries = [dict(r) for r in db.execute("""
+        SELECT atq.*, c.business_name FROM ai_tracking_queries atq
+        LEFT JOIN clients c ON atq.client_id=c.id WHERE atq.is_active=1 ORDER BY atq.created_at DESC
+    """).fetchall()]
+    platform_summary = {}
+    for s in scores:
+        p = s["platform"]
+        if p not in platform_summary:
+            platform_summary[p] = {"total_score": 0, "count": 0, "mentions": 0}
+        platform_summary[p]["total_score"] += s["score"]
+        platform_summary[p]["count"] += 1
+        platform_summary[p]["mentions"] += s["mentions_count"]
+    db.close()
+    return templates.TemplateResponse("ai_visibility.html", {
+        "request": request, "user": user, "clients": clients, "mentions": mentions,
+        "scores": scores, "tracking_queries": tracking_queries, "platform_summary": platform_summary
+    })
+
+@app.get("/api/ai-visibility/mentions")
+async def list_ai_mentions(request: Request):
+    user = require_auth(request)
+    db = get_db()
+    client_id = request.query_params.get("client_id")
+    platform = request.query_params.get("platform")
+    query = "SELECT abm.*, c.business_name FROM ai_brand_mentions abm LEFT JOIN clients c ON abm.client_id=c.id WHERE 1=1"
+    params = []
+    if client_id:
+        query += " AND abm.client_id=?"
+        params.append(int(client_id))
+    if platform:
+        query += " AND abm.platform=?"
+        params.append(platform)
+    query += " ORDER BY abm.tracked_at DESC LIMIT 100"
+    mentions = [dict(r) for r in db.execute(query, params).fetchall()]
+    db.close()
+    return {"mentions": mentions}
+
+@app.post("/api/ai-visibility/track")
+async def track_ai_mention(request: Request):
+    """Manually track a brand mention in AI platform"""
+    user = require_role(request, ["super_admin", "tech_seo", "operations_manager"])
+    data = await request.json()
+    db = get_db()
+    c = db.cursor()
+    c.execute("""INSERT INTO ai_brand_mentions (client_id, platform, query, response_text, brand_mentioned, competitor_mentioned, sentiment, position_in_response)
+                 VALUES (?,?,?,?,?,?,?,?)""",
+              (data["client_id"], data["platform"], data["query"], data.get("response_text"),
+               data.get("brand_mentioned", 0), data.get("competitor_mentioned"),
+               data.get("sentiment", "neutral"), data.get("position_in_response")))
+    mention_id = c.lastrowid
+    log_activity(db, user["id"], "ai_mention_tracked", f"AI mention on {data['platform']}: {data['query'][:50]}", "ai_mention", mention_id)
+    db.commit()
+    db.close()
+    return {"id": mention_id, "message": "AI mention tracked"}
+
+@app.get("/api/ai-visibility/scores")
+async def get_ai_scores(request: Request):
+    user = require_auth(request)
+    db = get_db()
+    client_id = request.query_params.get("client_id")
+    if client_id:
+        scores = [dict(r) for r in db.execute("""
+            SELECT * FROM ai_visibility_scores WHERE client_id=? ORDER BY tracked_date DESC
+        """, (int(client_id),)).fetchall()]
+    else:
+        scores = [dict(r) for r in db.execute("""
+            SELECT avs.*, c.business_name FROM ai_visibility_scores avs
+            LEFT JOIN clients c ON avs.client_id=c.id ORDER BY avs.tracked_date DESC
+        """).fetchall()]
+    db.close()
+    return {"scores": scores}
+
+@app.post("/api/ai-visibility/scores/calculate")
+async def calculate_ai_scores(request: Request):
+    """Calculate AI visibility scores from mentions data"""
+    user = require_role(request, ["super_admin", "tech_seo"])
+    data = await request.json()
+    client_id = data.get("client_id")
+    
+    db = get_db()
+    platforms = ["chatgpt", "gemini", "copilot", "perplexity", "claude", "ai_overview"]
+    results = []
+    
+    for platform in platforms:
+        mentions = db.execute("""
+            SELECT COUNT(*) as total, SUM(brand_mentioned) as mentioned, 
+                   SUM(CASE WHEN competitor_mentioned IS NOT NULL THEN 1 ELSE 0 END) as competitor_count
+            FROM ai_brand_mentions WHERE client_id=? AND platform=?
+        """, (client_id, platform)).fetchone()
+        
+        total = mentions["total"] or 0
+        mentioned = mentions["mentioned"] or 0
+        if total > 0:
+            score = round((mentioned / total) * 100, 1)
+            period = datetime.now().strftime("%Y-%m")
+            db.execute("""INSERT INTO ai_visibility_scores (client_id, platform, score, total_queries, mentions_count, competitor_mentions, period)
+                          VALUES (?,?,?,?,?,?,?)""",
+                       (client_id, platform, score, total, mentioned, mentions["competitor_count"] or 0, period))
+            results.append({"platform": platform, "score": score, "total": total, "mentions": mentioned})
+    
+    log_activity(db, user["id"], "ai_scores_calculated", f"AI scores calculated for client #{client_id}", "ai_visibility", client_id)
+    db.commit()
+    db.close()
+    return {"message": "Scores calculated", "results": results}
+
+@app.get("/api/ai-visibility/queries")
+async def list_tracking_queries(request: Request):
+    user = require_auth(request)
+    db = get_db()
+    client_id = request.query_params.get("client_id")
+    if client_id:
+        queries = [dict(r) for r in db.execute("SELECT * FROM ai_tracking_queries WHERE client_id=? AND is_active=1 ORDER BY created_at DESC", (int(client_id),)).fetchall()]
+    else:
+        queries = [dict(r) for r in db.execute("""
+            SELECT atq.*, c.business_name FROM ai_tracking_queries atq
+            LEFT JOIN clients c ON atq.client_id=c.id WHERE atq.is_active=1 ORDER BY atq.created_at DESC
+        """).fetchall()]
+    db.close()
+    return {"queries": queries}
+
+@app.post("/api/ai-visibility/queries")
+async def add_tracking_query(request: Request):
+    user = require_role(request, ["super_admin", "tech_seo", "operations_manager"])
+    data = await request.json()
+    db = get_db()
+    c = db.cursor()
+    c.execute("INSERT INTO ai_tracking_queries (client_id, query, category) VALUES (?,?,?)",
+              (data["client_id"], data["query"], data.get("category", "brand")))
+    query_id = c.lastrowid
+    log_activity(db, user["id"], "tracking_query_added", f"AI tracking query: {data['query'][:50]}", "ai_query", query_id)
+    db.commit()
+    db.close()
+    return {"id": query_id, "message": "Tracking query added"}
+
+@app.delete("/api/ai-visibility/queries/{query_id}")
+async def remove_tracking_query(query_id: int, request: Request):
+    user = require_role(request, ["super_admin", "tech_seo"])
+    db = get_db()
+    db.execute("UPDATE ai_tracking_queries SET is_active=0 WHERE id=?", (query_id,))
+    db.commit()
+    db.close()
+    return {"message": "Tracking query deactivated"}
+
+@app.get("/api/ai-visibility/report/{client_id}")
+async def ai_visibility_report(client_id: int, request: Request):
+    """Generate comprehensive AI visibility report for a client"""
+    user = require_auth(request)
+    db = get_db()
+    client = db.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+    if not client:
+        db.close()
+        raise HTTPException(status_code=404, detail="Client not found")
+    client = dict(client)
+    
+    mentions = [dict(r) for r in db.execute("SELECT * FROM ai_brand_mentions WHERE client_id=? ORDER BY tracked_at DESC", (client_id,)).fetchall()]
+    scores = [dict(r) for r in db.execute("SELECT * FROM ai_visibility_scores WHERE client_id=? ORDER BY tracked_date DESC", (client_id,)).fetchall()]
+    queries = [dict(r) for r in db.execute("SELECT * FROM ai_tracking_queries WHERE client_id=? AND is_active=1", (client_id,)).fetchall()]
+    
+    total_mentions = len(mentions)
+    brand_mentions = sum(1 for m in mentions if m["brand_mentioned"])
+    positive = sum(1 for m in mentions if m["sentiment"] == "positive")
+    negative = sum(1 for m in mentions if m["sentiment"] == "negative")
+    
+    platforms_data = {}
+    for m in mentions:
+        p = m["platform"]
+        if p not in platforms_data:
+            platforms_data[p] = {"total": 0, "mentioned": 0, "positive": 0}
+        platforms_data[p]["total"] += 1
+        if m["brand_mentioned"]:
+            platforms_data[p]["mentioned"] += 1
+        if m["sentiment"] == "positive":
+            platforms_data[p]["positive"] += 1
+    
+    db.close()
+    return {
+        "client": client,
+        "summary": {
+            "total_queries_tracked": total_mentions,
+            "brand_mentions": brand_mentions,
+            "mention_rate": round(brand_mentions / total_mentions * 100, 1) if total_mentions else 0,
+            "positive_mentions": positive,
+            "negative_mentions": negative,
+            "sentiment_score": round(positive / brand_mentions * 100, 1) if brand_mentions else 0
+        },
+        "platforms": platforms_data,
+        "recent_mentions": mentions[:20],
+        "scores": scores,
+        "tracked_queries": queries
+    }
+
+
+# ==========================================
 # Part 6: Public Free Audit (No Login Required)
 # ==========================================
 

@@ -1,0 +1,193 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>AI Visibility Tracking — AI Growth Labs OS</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/dashboard.css"></head><body>
+<aside class="sidebar"><div class="sidebar-brand">AI Growth<span>Labs</span></div>
+<nav><div class="nav-section">Main</div><a href="/dashboard">📊Dashboard</a>
+<a href="/crm">🤝CRM & Pipeline</a>
+<a href="/ai-visibility" class="active">🤖AI Visibility</a>
+<a href="/settings">⚙️API Settings</a>
+<a href="/analytics">📈Analytics</a>
+<a href="/monitor">📡Team Monitor</a>
+<a href="/team-chat">💬Team Chat</a>
+</nav>
+<div class="sidebar-user"><div class="user-avatar">{{ user.full_name[:2]|upper }}</div>
+<div><strong>{{ user.full_name }}</strong><small>{{ user.role|replace('_',' ')|title }}</small></div></div></aside>
+<main class="main">
+<div class="header-bar"><h1>🤖 AI Visibility Tracking</h1><span>Track your brand mentions in ChatGPT, Gemini, Copilot &amp; AI Overviews</span>
+<div class="header-actions"><a href="/dashboard" class="btn btn-outline">← Dashboard</a>
+<button class="btn btn-primary" onclick="showTrackMention()">+ Track Mention</button>
+<button class="btn btn-outline" onclick="showAddQuery()">+ Add Query</button></div></div>
+
+<!-- Platform Summary Cards -->
+<div class="stats-grid" style="margin-bottom:24px">
+{% set platforms_list = [('chatgpt','ChatGPT','🟢'),('gemini','Google Gemini','🔵'),('copilot','Microsoft Copilot','🟣'),('perplexity','Perplexity','🟤'),('ai_overview','AI Overviews','🔴')] %}
+{% for pkey, pname, picon in platforms_list %}
+<div class="stat-card">
+<div class="stat-label">{{ picon }} {{ pname }}</div>
+<div class="stat-value">{{ "%.0f"|format(platform_summary.get(pkey,{}).get('total_score',0) / platform_summary.get(pkey,{}).get('count',1)) if platform_summary.get(pkey,{}).get('count',0) > 0 else '—' }}%</div>
+<div style="color:#64748B;font-size:11px">{{ platform_summary.get(pkey,{}).get('mentions',0) }} mentions tracked</div>
+</div>
+{% endfor %}
+</div>
+
+<!-- Recent Mentions Table -->
+<h2 style="margin:20px 0 10px;color:#CBD5E1;font-size:14px;text-transform:uppercase;letter-spacing:1px">📋 Recent AI Mentions</h2>
+<div class="card">
+<div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
+<select id="filter-client" class="form-input" style="max-width:200px" onchange="filterMentions()">
+<option value="">All Clients</option>
+{% for c in clients %}<option value="{{ c.id }}">{{ c.business_name }}</option>{% endfor %}
+</select>
+<select id="filter-platform" class="form-input" style="max-width:150px" onchange="filterMentions()">
+<option value="">All Platforms</option>
+<option value="chatgpt">ChatGPT</option><option value="gemini">Gemini</option>
+<option value="copilot">Copilot</option><option value="perplexity">Perplexity</option>
+<option value="ai_overview">AI Overview</option>
+</select>
+</div>
+<div class="table-container"><table class="table" id="mentions-table">
+<thead><tr><th>Platform</th><th>Client</th><th>Query</th><th>Brand Mentioned</th><th>Sentiment</th><th>Competitor</th><th>Position</th><th>Date</th></tr></thead>
+<tbody>
+{% for m in mentions %}
+<tr data-client="{{ m.client_id }}" data-platform="{{ m.platform }}">
+<td><span class="badge badge-{% if m.platform == 'chatgpt' %}active{% elif m.platform == 'gemini' %}info{% elif m.platform == 'copilot' %}warning{% else %}pending{% endif %}">
+{% if m.platform == 'chatgpt' %}🟢{% elif m.platform == 'gemini' %}🔵{% elif m.platform == 'copilot' %}🟣{% elif m.platform == 'perplexity' %}🟤{% else %}🔴{% endif %} {{ m.platform|upper }}</span></td>
+<td>{{ m.business_name or 'N/A' }}</td>
+<td style="max-width:250px"><div style="font-weight:600;font-size:13px">{{ m.query }}</div>
+{% if m.response_text %}<div style="color:#64748B;font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px" title="{{ m.response_text }}">{{ m.response_text[:80] }}...</div>{% endif %}</td>
+<td>{% if m.brand_mentioned %}<span class="badge badge-active">YES ✓</span>{% else %}<span class="badge badge-pending">NO</span>{% endif %}</td>
+<td><span class="badge badge-{% if m.sentiment == 'positive' %}active{% elif m.sentiment == 'negative' %}danger{% else %}pending{% endif %}">{{ m.sentiment|upper }}</span></td>
+<td>{{ m.competitor_mentioned or '—' }}</td>
+<td>{% if m.position_in_response %}#{{ m.position_in_response }}{% else %}—{% endif %}</td>
+<td style="white-space:nowrap">{{ m.tracked_at[:10] if m.tracked_at else '—' }}</td>
+</tr>
+{% endfor %}
+</tbody></table></div></div>
+
+<!-- Visibility Scores -->
+<h2 style="margin:30px 0 10px;color:#CBD5E1;font-size:14px;text-transform:uppercase;letter-spacing:1px">📊 Visibility Scores by Platform</h2>
+<div class="card">
+<div class="table-container"><table class="table">
+<thead><tr><th>Client</th><th>Platform</th><th>Score</th><th>Queries</th><th>Mentions</th><th>Competitor Mentions</th><th>Period</th></tr></thead>
+<tbody>
+{% for s in scores %}
+<tr>
+<td>{{ s.business_name or 'N/A' }}</td>
+<td>{% if s.platform == 'chatgpt' %}🟢{% elif s.platform == 'gemini' %}🔵{% elif s.platform == 'copilot' %}🟣{% else %}🔴{% endif %} {{ s.platform|upper }}</td>
+<td><div style="display:flex;align-items:center;gap:8px">
+<div style="width:60px;height:6px;background:#1E293B;border-radius:3px;overflow:hidden">
+<div style="width:{{ s.score }}%;height:100%;background:{% if s.score >= 70 %}#10B981{% elif s.score >= 40 %}#F59E0B{% else %}#EF4444{% endif %};border-radius:3px"></div>
+</div>
+<span style="font-weight:700;color:{% if s.score >= 70 %}#10B981{% elif s.score >= 40 %}#F59E0B{% else %}#EF4444{% endif %}">{{ s.score }}%</span>
+</div></td>
+<td>{{ s.total_queries }}</td>
+<td>{{ s.mentions_count }}</td>
+<td>{{ s.competitor_mentions }}</td>
+<td>{{ s.period }}</td>
+</tr>
+{% endfor %}
+</tbody></table></div></div>
+
+<!-- Tracked Queries -->
+<h2 style="margin:30px 0 10px;color:#CBD5E1;font-size:14px;text-transform:uppercase;letter-spacing:1px">🔍 Tracked Queries</h2>
+<div class="card">
+<div class="table-container"><table class="table">
+<thead><tr><th>Client</th><th>Query</th><th>Category</th><th>Last Checked</th><th>Actions</th></tr></thead>
+<tbody>
+{% for q in tracking_queries %}
+<tr>
+<td>{{ q.business_name or 'N/A' }}</td>
+<td style="font-weight:600">{{ q.query }}</td>
+<td><span class="badge badge-{% if q.category == 'brand' %}active{% elif q.category == 'service' %}info{% elif q.category == 'competitor' %}warning{% else %}pending{% endif %}">{{ q.category|upper }}</span></td>
+<td>{{ q.last_checked or 'Never' }}</td>
+<td><button class="btn btn-sm btn-outline" onclick="removeQuery({{ q.id }})">Remove</button></td>
+</tr>
+{% endfor %}
+</tbody></table></div></div>
+
+<!-- Track Mention Modal -->
+<div id="mention-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
+<div class="card" style="width:520px;max-width:90%;padding:24px;max-height:90vh;overflow-y:auto">
+<h3>Track AI Mention</h3>
+<select id="tm_client" class="form-input" style="margin-top:12px">
+{% for c in clients %}<option value="{{ c.id }}">{{ c.business_name }}</option>{% endfor %}
+</select>
+<select id="tm_platform" class="form-input" style="margin-top:8px">
+<option value="chatgpt">ChatGPT</option><option value="gemini">Google Gemini</option>
+<option value="copilot">Microsoft Copilot</option><option value="perplexity">Perplexity</option>
+<option value="claude">Claude</option><option value="ai_overview">AI Overview</option>
+</select>
+<input id="tm_query" placeholder="Search query used *" class="form-input" style="margin-top:8px">
+<textarea id="tm_response" placeholder="AI response text (paste relevant excerpt)" class="form-input" style="margin-top:8px;min-height:80px"></textarea>
+<div style="display:flex;gap:8px;margin-top:8px">
+<select id="tm_mentioned" class="form-input"><option value="1">Brand Mentioned</option><option value="0">Not Mentioned</option></select>
+<select id="tm_sentiment" class="form-input"><option value="positive">Positive</option><option value="neutral">Neutral</option><option value="negative">Negative</option><option value="mixed">Mixed</option></select>
+</div>
+<input id="tm_competitor" placeholder="Competitor mentioned (optional)" class="form-input" style="margin-top:8px">
+<input id="tm_position" type="number" placeholder="Position in response (1=first)" class="form-input" style="margin-top:8px">
+<div style="display:flex;gap:8px;margin-top:16px">
+<button class="btn btn-primary" onclick="saveMention()" style="flex:1">Save Mention</button>
+<button class="btn btn-outline" onclick="closeModal('mention-modal')" style="flex:1">Cancel</button>
+</div></div></div>
+
+<!-- Add Query Modal -->
+<div id="query-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
+<div class="card" style="width:450px;max-width:90%;padding:24px">
+<h3>Add Tracking Query</h3>
+<select id="aq_client" class="form-input" style="margin-top:12px">
+{% for c in clients %}<option value="{{ c.id }}">{{ c.business_name }}</option>{% endfor %}
+</select>
+<input id="aq_query" placeholder="Search query to track *" class="form-input" style="margin-top:8px">
+<select id="aq_category" class="form-input" style="margin-top:8px">
+<option value="brand">Brand</option><option value="service">Service</option>
+<option value="industry">Industry</option><option value="competitor">Competitor</option>
+<option value="location">Location</option>
+</select>
+<div style="display:flex;gap:8px;margin-top:16px">
+<button class="btn btn-primary" onclick="saveQuery()" style="flex:1">Add Query</button>
+<button class="btn btn-outline" onclick="closeModal('query-modal')" style="flex:1">Cancel</button>
+</div></div></div>
+
+<script>
+function showTrackMention(){document.getElementById('mention-modal').style.display='flex'}
+function showAddQuery(){document.getElementById('query-modal').style.display='flex'}
+function closeModal(id){document.getElementById(id).style.display='none'}
+
+function filterMentions(){
+    const client=document.getElementById('filter-client').value;
+    const platform=document.getElementById('filter-platform').value;
+    document.querySelectorAll('#mentions-table tbody tr').forEach(row=>{
+        const rc=row.dataset.client, rp=row.dataset.platform;
+        const show=(!client||rc===client)&&(!platform||rp===platform);
+        row.style.display=show?'':'none';
+    });
+}
+
+function saveMention(){
+    const data={client_id:parseInt(document.getElementById('tm_client').value),
+        platform:document.getElementById('tm_platform').value,
+        query:document.getElementById('tm_query').value,
+        response_text:document.getElementById('tm_response').value,
+        brand_mentioned:parseInt(document.getElementById('tm_mentioned').value),
+        sentiment:document.getElementById('tm_sentiment').value,
+        competitor_mentioned:document.getElementById('tm_competitor').value||null,
+        position_in_response:parseInt(document.getElementById('tm_position').value)||null};
+    if(!data.query){alert('Query is required');return}
+    fetch('/api/ai-visibility/track',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+    .then(r=>r.json()).then(r=>{alert(r.message);location.reload()}).catch(e=>alert('Error: '+e))}
+
+function saveQuery(){
+    const data={client_id:parseInt(document.getElementById('aq_client').value),
+        query:document.getElementById('aq_query').value,
+        category:document.getElementById('aq_category').value};
+    if(!data.query){alert('Query is required');return}
+    fetch('/api/ai-visibility/queries',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+    .then(r=>r.json()).then(r=>{alert(r.message);location.reload()}).catch(e=>alert('Error: '+e))}
+
+function removeQuery(id){
+    if(!confirm('Remove this tracking query?'))return;
+    fetch('/api/ai-visibility/queries/'+id,{method:'DELETE'})
+    .then(r=>r.json()).then(r=>{alert(r.message);location.reload()}).catch(e=>alert('Error: '+e))}
+</script>
+</main></body></html>
